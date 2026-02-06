@@ -759,9 +759,6 @@ def render_quotations():
                                 items = result.get('items', [])
                                 total_amount = result.get('total_amount', 0)
                                 notes = result.get('notes', '')
-
-                                st.success(f"✅ AI가 견적서를 생성했습니다!")
-                                st.info(f"💰 예상 비용: ${result.get('estimated_cost', 0):.4f} USD ({result.get('tokens_used', 0)} 토큰)")
                             else:
                                 # Fallback
                                 items = [
@@ -780,8 +777,116 @@ def render_quotations():
                                 notes=notes
                             )
 
-                            st.success(f"🎉 견적서가 저장되었습니다! (ID: {quotation_id})")
-                            st.rerun()
+                            # 생성된 견적서 정보를 세션에 저장 (미리보기용)
+                            st.session_state.preview_quotation = {
+                                'quotation_id': quotation_id,
+                                'items': items,
+                                'total_amount': total_amount,
+                                'notes': notes,
+                                'client_name': inquiry.get('client_name', ''),
+                                'client_email': inquiry.get('client_email', ''),
+                                'inquiry_id': inquiry['id']
+                            }
+
+                            # 생성된 견적서 자동 선택
+                            st.session_state.selected_quotation_id = str(quotation_id)
+
+                        # 견적서 생성 후 미리보기 표시
+                        if 'preview_quotation' in st.session_state:
+                            st.success(f"🎉 견적서가 생성되었습니다! (ID: {quotation_id})")
+
+                            st.markdown("---")
+                            st.markdown("### 📄 견적서 미리보기")
+
+                            preview = st.session_state.preview_quotation
+
+                            # 기본 정보
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.metric("고객", preview['client_name'])
+                            with col2:
+                                st.metric("품목 수", f"{len(preview['items'])}개")
+                            with col3:
+                                st.metric("총 금액", format_currency(preview['total_amount']))
+
+                            # 품목 목록
+                            st.markdown("#### 품목 상세")
+                            for item in preview['items']:
+                                with st.expander(f"📦 {item.get('name', '품목')}"):
+                                    col1, col2, col3 = st.columns(3)
+                                    with col1:
+                                        st.markdown(f"**수량:** {item.get('quantity', 1)}")
+                                    with col2:
+                                        st.markdown(f"**단가:** {format_currency(item.get('unit_price', 0))}")
+                                    with col3:
+                                        amount = item.get('quantity', 1) * item.get('unit_price', 0)
+                                        st.markdown(f"**금액:** {format_currency(amount)}")
+                                    if item.get('description'):
+                                        st.markdown(f"**설명:** {item['description']}")
+
+                            # 합계
+                            total = preview['total_amount']
+                            vat = int(total * 0.1)
+                            grand_total = total + vat
+
+                            st.markdown("---")
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.markdown(f"**공급가액:** {format_currency(total)}")
+                            with col2:
+                                st.markdown(f"**부가세(10%):** {format_currency(vat)}")
+                            with col3:
+                                st.markdown(f"**합계:** {format_currency(grand_total)}")
+
+                            # 액션 버튼
+                            st.markdown("---")
+
+                            # PDF 다운로드 (미리보기)
+                            try:
+                                pdf_gen = PDFQuotationGenerator()
+
+                                # 견적서 데이터 생성
+                                quotation_for_pdf = {
+                                    'quotation_number': f'QT-{quotation_id:04d}',
+                                    'created_at': preview.get('created_at', ''),
+                                    'validity_days': 30,
+                                    'total_amount': preview['total_amount'],
+                                    'items': preview['items'],
+                                    'notes': preview['notes']
+                                }
+
+                                client_for_pdf = {
+                                    'name': preview['client_name'],
+                                    'email': preview['client_email'],
+                                    'phone': ''
+                                }
+
+                                company_info = {
+                                    'name': st.session_state.db["settings"].get_setting("company_name"),
+                                    'phone': st.session_state.db["settings"].get_setting("company_phone"),
+                                    'address': st.session_state.db["settings"].get_setting("company_address"),
+                                }
+
+                                pdf_data = pdf_gen.generate_quotation_pdf(
+                                    quotation=quotation_for_pdf,
+                                    client=client_for_pdf,
+                                    company_info=company_info if company_info['name'] else None
+                                )
+
+                                st.download_button(
+                                    label="📄 PDF 다운로드",
+                                    data=pdf_data,
+                                    file_name=f"견적서_{quotation_for_pdf['quotation_number']}.pdf",
+                                    mime="application/pdf",
+                                    width='stretch'
+                                )
+                            except Exception as e:
+                                st.error(f"PDF 생성 오류: {str(e)}")
+
+                            if st.button("➡️ 견적서 목록으로 이동", key="preview_goto", width='stretch'):
+                                del st.session_state.preview_quotation
+                                st.session_state.switch_to_quotation_list = True
+                                st.rerun()
             else:
                 st.info("등록된 문의가 없습니다.")
 
@@ -856,6 +961,8 @@ def render_quotations():
                             items=st.session_state.quotation_items,
                             total_amount=total
                         )
+                        # 생성된 견적서 자동 선택
+                        st.session_state.selected_quotation_id = str(quotation_id)
                         st.session_state.quotation_items = []
                         st.success(f"🎉 견적서가 생성되었습니다! (ID: {quotation_id})")
                         st.rerun()
@@ -886,7 +993,16 @@ def render_quotations():
             # 상세 보기
             st.markdown("### 견적서 상세")
             quotation_ids = [str(q["id"]) for q in quotations]
+
+            # 자동 선택을 위한 기본값 설정
+            default_idx = 0
+            if hasattr(st.session_state, 'selected_quotation_id') and st.session_state.selected_quotation_id in quotation_ids:
+                default_idx = quotation_ids.index(st.session_state.selected_quotation_id) + 1  # +1是因为有空字符串选项
+                # 선택 후 초기화
+                st.session_state.selected_quotation_id = None
+
             selected_id = st.selectbox("견적서 선택", [""] + quotation_ids,
+                                     index=default_idx,
                                      format_func=lambda x: "선택하세요" if x == "" else f"{x}번 견적서")
 
             if selected_id:
@@ -940,39 +1056,41 @@ def render_quotations():
 
                         st.markdown("---")
 
-                        # PDF 다운로드
-                        if st.button("📄 PDF 다운로드", width='stretch'):
+                        # PDF 다운로드 - 미리 생성 방식
+                        try:
                             with st.spinner("PDF를 생성 중입니다..."):
-                                try:
-                                    pdf_gen = PDFQuotationGenerator()
+                                pdf_gen = PDFQuotationGenerator()
 
-                                    # 고객 정보 가져오기
-                                    client = st.session_state.db["client"].get_client(quotation['client_id'])
+                                # 고객 정보 가져오기
+                                client = st.session_state.db["client"].get_client(quotation['client_id'])
 
-                                    # 회사 정보
-                                    company_info = {
-                                        'name': st.session_state.db["settings"].get_setting("company_name"),
-                                        'phone': st.session_state.db["settings"].get_setting("company_phone"),
-                                        'address': st.session_state.db["settings"].get_setting("company_address"),
-                                    }
+                                # 회사 정보
+                                company_info = {
+                                    'name': st.session_state.db["settings"].get_setting("company_name"),
+                                    'phone': st.session_state.db["settings"].get_setting("company_phone"),
+                                    'address': st.session_state.db["settings"].get_setting("company_address"),
+                                }
 
-                                    # PDF 생성
-                                    pdf_data = pdf_gen.generate_quotation_pdf(
-                                        quotation=quotation,
-                                        client=client,
-                                        company_info=company_info if company_info['name'] else None
-                                    )
+                                # PDF 생성
+                                pdf_data = pdf_gen.generate_quotation_pdf(
+                                    quotation=quotation,
+                                    client=client,
+                                    company_info=company_info if company_info['name'] else None
+                                )
 
-                                    # 다운로드 버튼
-                                    st.download_button(
-                                        label="⬇️ PDF 파일 다운로드",
-                                        data=pdf_data,
-                                        file_name=f"견적서_{quotation['quotation_number']}.pdf",
-                                        mime="application/pdf",
-                                        width='stretch'
-                                    )
-                                except Exception as e:
-                                    st.error(f"PDF 생성 오류: {str(e)}")
+                            # 다운로드 버튼
+                            st.download_button(
+                                label="📄 PDF 다운로드",
+                                data=pdf_data,
+                                file_name=f"견적서_{quotation['quotation_number']}.pdf",
+                                mime="application/pdf",
+                                width='stretch'
+                            )
+                        except Exception as e:
+                            st.error(f"PDF 생성 오류: {str(e)}")
+                            import traceback
+                            with st.expander("오류 상세"):
+                                st.code(traceback.format_exc())
 
                         # 이메일 발송
                         if st.button("📧 이메일 발송", width='stretch'):
@@ -1770,17 +1888,32 @@ def render_calendar():
             st.success(f"태스크 {task_count}개, 결제 {payment_count}개 동기화 완료!")
             st.rerun()
     with col3:
-        if st.button("📥 내보내기", width='stretch'):
+        # iCal 내보내기 위한 세션 상태
+        ical_key = "calendar_ical_data"
+
+        def prepare_ical():
             events = st.session_state.db["calendar"].get_all_events()
             if events:
-                ical_data = generate_ical_from_events(events)
-                st.download_button(
-                    label="⬇️ iCal 파일 다운로드",
-                    data=ical_data,
-                    file_name=f"calendar_{datetime.now().strftime('%Y%m%d')}.ics",
-                    mime="text/calendar",
-                    width='stretch'
-                )
+                st.session_state[ical_key] = generate_ical_from_events(events)
+            else:
+                st.session_state[ical_key] = None
+
+        # 현재 ical 데이터가 없으면 미리 생성
+        if ical_key not in st.session_state:
+            prepare_ical()
+
+        # iCal 다운로드 버튼 (데이터가 있을 때만 표시)
+        if ical_key in st.session_state and st.session_state[ical_key] is not None:
+            st.download_button(
+                label="📥 iCal 내보내기",
+                data=st.session_state[ical_key],
+                file_name=f"calendar_{datetime.now().strftime('%Y%m%d')}.ics",
+                mime="text/calendar",
+                width='stretch'
+            )
+        else:
+            # 데이터 없음 메시지
+            st.info("내보낼 이벤트가 없습니다.")
 
     st.markdown("---")
 

@@ -26,6 +26,7 @@ class PDFQuotationGenerator:
         self.page_size = A4
         self.width, self.height = A4
         self.margin = 2 * cm
+        self.font_registered = False  # 폰트 등록 상태 초기화
 
         # 한글 폰트 설정 (시스템 폰트 사용)
         self._setup_fonts()
@@ -43,12 +44,13 @@ class PDFQuotationGenerator:
             if os.path.exists(font_path):
                 try:
                     pdfmetrics.registerFont(TTFont('Korean', font_path))
+                    self.font_registered = True  # 폰트 등록 성공
                     return
                 except:
                     continue
 
-        # 폰트를 찾지 못한 경우 기본 폰트 사용
-        self.font_registered = False
+        # 폰트를 찾지 못한 경우 기본 폰트 사용 (이미 False로 초기화됨)
+        pass
     def generate_quotation_pdf(self, quotation: Dict, client: Dict,
                               company_info: Dict = None) -> bytes:
         """
@@ -193,7 +195,7 @@ class PDFQuotationGenerator:
             ('LEFTPADDING', (0, 0), (-1, -1), 6),
             ('RIGHTPADDING', (0, 0), (-1, -1), 6),
             ('ALIGN', (4, -3), (-1, -1), 'RIGHT'),
-            ('FONTNAME', (4, -3), (-1, -1), 'Korean-Bold' if self.font_registered else 'Helvetica-Bold'),
+            ('FONTNAME', (4, -3), (-1, -1), 'Korean' if self.font_registered else 'Helvetica-Bold'),
         ]))
         story.append(item_table)
         story.append(Spacer(1, 1 * cm))
