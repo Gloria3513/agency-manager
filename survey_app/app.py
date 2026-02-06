@@ -788,7 +788,7 @@ st.markdown("""
             미래를 여는 AI·코딩 교육의 파트너
         </p>
         <p style='font-size: 12px; margin-top: 15px;'>
-            문의: contact@smartact.com | 전화: 02-1234-5678
+            문의: smatact@gmail.com | 전화: 010-4782-3513
         </p>
     </div>
 """, unsafe_allow_html=True)
