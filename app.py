@@ -46,6 +46,48 @@ def load_css():
 
 load_css()
 
+# ===== 로그인 상태 유지를 위한 쿠키 관리 =====
+
+import hashlib
+import secrets
+
+# 쿠키 관련 JavaScript 함수
+COOKIE_JS = """
+<script>
+// 쿠키 설정 함수
+function setLoginCookie(userId, email, name, role) {
+    const maxAge = 7 * 24 * 60 * 60; // 7일
+    document.cookie = `smartact_user_id=${userId}; max-age=${maxAge}; path=/; SameSite=Lax`;
+    document.cookie = `smartact_email=${encodeURIComponent(email)}; max-age=${maxAge}; path=/; SameSite=Lax`;
+    document.cookie = `smartact_name=${encodeURIComponent(name)}; max-age=${maxAge}; path=/; SameSite=Lax`;
+    document.cookie = `smartact_role=${role}; max-age=${maxAge}; path=/; SameSite=Lax`;
+}
+
+// 쿠키 삭제 함수
+function deleteLoginCookies() {
+    document.cookie = "smartact_user_id=; max-age=0; path=/";
+    document.cookie = "smartact_email=; max-age=0; path=/";
+    document.cookie = "smartact_name=; max-age=0; path=/";
+    document.cookie = "smartact_role=; max-age=0; path=/";
+}
+
+// 쿠키 가져오기 함수
+function getCookie(name) {
+    const nameEQ = name + "=";
+    const cookies = document.cookie.split(';');
+    for(let i = 0; i < cookies.length; i++) {
+        let c = cookies[i];
+        while (c.charAt(0) === ' ') c = c.substring(1, c.length);
+        if (c.indexOf(nameEQ) === 0) return c.substring(nameEQ.length, c.length);
+    }
+    return null;
+}
+</script>
+"""
+
+# 쿠키 삽입
+st.markdown(COOKIE_JS, unsafe_allow_html=True)
+
 # 로그인 상태 초기화 (먼저 해야 함)
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
@@ -316,6 +358,14 @@ def render_sidebar():
             st.session_state.authenticated = False
             st.session_state.user = None
             st.session_state.current_page = "login"
+
+            # 쿠키 삭제
+            st.markdown("""
+                <script>
+                deleteLoginCookies();
+                </script>
+            """, unsafe_allow_html=True)
+
             st.rerun()
 
         st.markdown("---")
@@ -2417,6 +2467,13 @@ def render_login():
                     # 활동 로그
                     activity_logger.log_login(user['id'], True)
 
+                    # 쿠키 설정 (로그인 유지)
+                    st.markdown(f"""
+                        <script>
+                        setLoginCookie({user['id']}, '{user['email']}', '{user['name']}', '{user.get('role', 'member')}');
+                        </script>
+                    """, unsafe_allow_html=True)
+
                     st.success(f"환영합니다, {user['name']}님!")
                     st.rerun()
                 else:
@@ -2638,8 +2695,33 @@ def render_activity_log():
 
 # ===== 메인 앱 =====
 
+def check_auto_login():
+    """쿠키를 확인하여 자동 로그인"""
+    if not st.session_state.authenticated and auth_manager:
+        # URL 쿼리 파라미터에서 로그인 정보 확인 (쿠키 대신)
+        query_params = st.query_params
+        if 'user_id' in query_params and 'email' in query_params:
+            try:
+                user_id = int(query_params['user_id'][0])
+                email = query_params['email'][0]
+                # 데이터베이스에서 사용자 확인
+                user_db = st.session_state.db["user"]
+                user = user_db.get_user_by_email(email)
+                if user and user['id'] == user_id:
+                    st.session_state.authenticated = True
+                    st.session_state.user = user
+                    st.session_state.current_page = "dashboard"
+                    # URL 파라미터 제거
+                    query_params.clear()
+                    st.rerun()
+            except:
+                pass
+
 def main():
     """메인 앱"""
+    # 자동 로그인 체크
+    check_auto_login()
+
     # 로그인되지 않은 경우
     if not st.session_state.authenticated:
         render_login()
