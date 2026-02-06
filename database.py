@@ -366,6 +366,136 @@ class Database:
             )
         """)
 
+        # 사용자 테이블
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT UNIQUE NOT NULL,
+                name TEXT NOT NULL,
+                password_hash TEXT,
+                role TEXT DEFAULT 'member',
+                department TEXT,
+                phone TEXT,
+                avatar TEXT,
+                is_active BOOLEAN DEFAULT 1,
+                last_login TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # 팀 테이블
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS teams (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                description TEXT,
+                leader_id INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (leader_id) REFERENCES users(id)
+            )
+        """)
+
+        # 팀 멤버 테이블
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS team_members (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                team_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                role TEXT DEFAULT 'member',
+                joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (team_id) REFERENCES teams(id),
+                FOREIGN KEY (user_id) REFERENCES users(id),
+                UNIQUE(team_id, user_id)
+            )
+        """)
+
+        # 역할 권한 테이블
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS role_permissions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                role TEXT NOT NULL,
+                permission TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(role, permission)
+            )
+        """)
+
+        # 활동 로그 테이블
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS activity_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                action_type TEXT NOT NULL,
+                entity_type TEXT,
+                entity_id INTEGER,
+                details TEXT,
+                ip_address TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            )
+        """)
+
+        # 댓글 테이블
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS comments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                entity_type TEXT NOT NULL,
+                entity_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                parent_id INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id),
+                FOREIGN KEY (parent_id) REFERENCES comments(id)
+            )
+        """)
+
+        # 댓글 멘션 테이블
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS comment_mentions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                comment_id INTEGER NOT NULL,
+                username TEXT NOT NULL,
+                is_read BOOLEAN DEFAULT 0,
+                read_at TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (comment_id) REFERENCES comments(id)
+            )
+        """)
+
+        # 워크플로우 테이블
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS workflows (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                description TEXT,
+                trigger_type TEXT NOT NULL,
+                trigger_config TEXT,
+                actions_json TEXT,
+                is_active BOOLEAN DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # 워크플로우 실행 로그 테이블
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS workflow_executions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                workflow_id INTEGER NOT NULL,
+                status TEXT DEFAULT 'running',
+                input_data TEXT,
+                result TEXT,
+                error_message TEXT,
+                started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                completed_at TIMESTAMP,
+                FOREIGN KEY (workflow_id) REFERENCES workflows(id)
+            )
+        """)
+
         # 기본 설정 값 추가
         default_settings = {
             'pricing_guideline': '웹사이트 제작: 기본 500만원부터\n랜딩페이지: 200만원부터\n앱 개발: 1000만원부터\n유지보수: 월 50만원부터',
@@ -1427,3 +1557,374 @@ class ClientCommunicationDB(Database):
         result = cursor.fetchone()
         conn.close()
         return result['count'] if result else 0
+
+
+class UserDB(Database):
+    """사용자 관련 데이터베이스 작업"""
+
+    def add_user(self, email: str, name: str, password_hash: str,
+                 role: str = 'member', department: str = None,
+                 phone: str = None, avatar: str = None) -> int:
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO users (email, name, password_hash, role, department, phone, avatar)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (email, name, password_hash, role, department, phone, avatar))
+        user_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        return user_id
+
+    def get_user(self, user_id: int) -> Optional[Dict]:
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+        row = cursor.fetchone()
+        conn.close()
+        return dict(row) if row else None
+
+    def get_user_by_email(self, email: str) -> Optional[Dict]:
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM users WHERE email = ?", (email,))
+        row = cursor.fetchone()
+        conn.close()
+        return dict(row) if row else None
+
+    def get_all_users(self) -> List[Dict]:
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM users ORDER BY created_at DESC")
+        rows = cursor.fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+
+    def update_user(self, user_id: int, **kwargs) -> bool:
+        allowed_fields = ['name', 'email', 'role', 'department', 'phone', 'avatar', 'is_active']
+        updates = [f"{k} = ?" for k in kwargs.keys() if k in allowed_fields]
+        if not updates:
+            return False
+
+        values = [v for k, v in kwargs.items() if k in allowed_fields]
+        values.append(user_id)
+
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            UPDATE users SET {', '.join(updates)}, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        """, values)
+        conn.commit()
+        affected = cursor.rowcount
+        conn.close()
+        return affected > 0
+
+    def delete_user(self, user_id: int) -> bool:
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        conn.commit()
+        affected = cursor.rowcount
+        conn.close()
+        return affected > 0
+
+    def update_last_login(self, user_id: int) -> bool:
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE users SET last_login = CURRENT_TIMESTAMP
+            WHERE id = ?
+        """, (user_id,))
+        conn.commit()
+        affected = cursor.rowcount
+        conn.close()
+        return affected > 0
+
+
+class TeamDB(Database):
+    """팀 관련 데이터베이스 작업"""
+
+    def create_team(self, name: str, description: str = None,
+                    leader_id: int = None) -> int:
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO teams (name, description, leader_id)
+            VALUES (?, ?, ?)
+        """, (name, description, leader_id))
+        team_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        return team_id
+
+    def get_team(self, team_id: int) -> Optional[Dict]:
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM teams WHERE id = ?", (team_id,))
+        row = cursor.fetchone()
+        conn.close()
+        return dict(row) if row else None
+
+    def get_all_teams(self) -> List[Dict]:
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM teams ORDER BY name ASC")
+        rows = cursor.fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+
+    def add_team_member(self, team_id: int, user_id: int,
+                       role: str = 'member') -> bool:
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT OR IGNORE INTO team_members (team_id, user_id, role)
+            VALUES (?, ?, ?)
+        """, (team_id, user_id, role))
+        conn.commit()
+        affected = cursor.rowcount
+        conn.close()
+        return affected > 0
+
+    def remove_team_member(self, team_id: int, user_id: int) -> bool:
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            DELETE FROM team_members WHERE team_id = ? AND user_id = ?
+        """, (team_id, user_id))
+        conn.commit()
+        affected = cursor.rowcount
+        conn.close()
+        return affected > 0
+
+    def get_team_members(self, team_id: int) -> List[Dict]:
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT tm.*, u.name, u.email, u.avatar
+            FROM team_members tm
+            LEFT JOIN users u ON tm.user_id = u.id
+            WHERE tm.team_id = ?
+            ORDER BY tm.role DESC, u.name ASC
+        """, (team_id,))
+        rows = cursor.fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+
+    def get_user_teams(self, user_id: int) -> List[Dict]:
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT t.*, tm.role as member_role
+            FROM teams t
+            LEFT JOIN team_members tm ON t.id = tm.team_id
+            WHERE tm.user_id = ?
+            ORDER BY t.name ASC
+        """, (user_id,))
+        rows = cursor.fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+
+
+class RoleDB(Database):
+    """권한 관련 데이터베이스 작업"""
+
+    def get_role_permissions(self, role: str) -> List[str]:
+        """역할별 권한 조회"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT permission FROM role_permissions
+            WHERE role = ?
+        """, (role,))
+        permissions = [row['permission'] for row in cursor.fetchall()]
+        conn.close()
+        return permissions
+
+    def has_permission(self, role: str, permission: str) -> bool:
+        """권한 확인"""
+        permissions = self.get_role_permissions(role)
+        return permission in permissions
+
+    def add_permission(self, role: str, permission: str) -> bool:
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT OR IGNORE INTO role_permissions (role, permission)
+            VALUES (?, ?)
+        """, (role, permission))
+        conn.commit()
+        affected = cursor.rowcount
+        conn.close()
+        return affected > 0
+
+    def remove_permission(self, role: str, permission: str) -> bool:
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            DELETE FROM role_permissions WHERE role = ? AND permission = ?
+        """, (role, permission))
+        conn.commit()
+        affected = cursor.rowcount
+        conn.close()
+        return affected > 0
+
+
+class ActivityLogDB(Database):
+    """활동 로그 데이터베이스 작업"""
+
+    def log_activity(self, user_id: int, action_type: str,
+                    entity_type: str = None, entity_id: int = None,
+                    details: str = None, ip_address: str = None) -> int:
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO activity_logs (user_id, action_type, entity_type, entity_id, details, ip_address)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (user_id, action_type, entity_type, entity_id, details, ip_address))
+        log_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        return log_id
+
+    def get_activities(self, user_id: int = None, limit: int = 100) -> List[Dict]:
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        if user_id:
+            cursor.execute("""
+                SELECT al.*, u.name as user_name, u.avatar
+                FROM activity_logs al
+                LEFT JOIN users u ON al.user_id = u.id
+                WHERE al.user_id = ?
+                ORDER BY al.created_at DESC
+                LIMIT ?
+            """, (user_id, limit))
+        else:
+            cursor.execute("""
+                SELECT al.*, u.name as user_name, u.avatar
+                FROM activity_logs al
+                LEFT JOIN users u ON al.user_id = u.id
+                ORDER BY al.created_at DESC
+                LIMIT ?
+            """, (limit,))
+
+        rows = cursor.fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+
+    def get_entity_activities(self, entity_type: str, entity_id: int,
+                             limit: int = 50) -> List[Dict]:
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT al.*, u.name as user_name, u.avatar
+            FROM activity_logs al
+            LEFT JOIN users u ON al.user_id = u.id
+            WHERE al.entity_type = ? AND al.entity_id = ?
+            ORDER BY al.created_at DESC
+            LIMIT ?
+        """, (entity_type, entity_id, limit))
+        rows = cursor.fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+
+
+class CommentDB(Database):
+    """댓글/멘션 데이터베이스 작업"""
+
+    def add_comment(self, entity_type: str, entity_id: int, user_id: int,
+                   content: str, parent_id: int = None) -> int:
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        # 멘션 추출
+        import re
+        mentions = re.findall(r'@(\w+)', content)
+
+        cursor.execute("""
+            INSERT INTO comments (entity_type, entity_id, user_id, content, parent_id)
+            VALUES (?, ?, ?, ?, ?)
+        """, (entity_type, entity_id, user_id, content, parent_id))
+        comment_id = cursor.lastrowid
+
+        # 멘션 저장
+        for mention in mentions:
+            cursor.execute("""
+                INSERT INTO comment_mentions (comment_id, username)
+                VALUES (?, ?)
+            """, (comment_id, mention))
+
+        conn.commit()
+        conn.close()
+        return comment_id
+
+    def get_comments(self, entity_type: str, entity_id: int) -> List[Dict]:
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT c.*, u.name as user_name, u.avatar
+            FROM comments c
+            LEFT JOIN users u ON c.user_id = u.id
+            WHERE c.entity_type = ? AND c.entity_id = ? AND c.parent_id IS NULL
+            ORDER BY c.created_at ASC
+        """, (entity_type, entity_id))
+        rows = cursor.fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+
+    def get_replies(self, comment_id: int) -> List[Dict]:
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT c.*, u.name as user_name, u.avatar
+            FROM comments c
+            LEFT JOIN users u ON c.user_id = u.id
+            WHERE c.parent_id = ?
+            ORDER BY c.created_at ASC
+        """, (comment_id,))
+        rows = cursor.fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+
+    def get_mentions(self, username: str, unread: bool = True) -> List[Dict]:
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        if unread:
+            cursor.execute("""
+                SELECT cm.*, c.content, c.entity_type, c.entity_id, c.created_at,
+                       u.name as author_name
+                FROM comment_mentions cm
+                LEFT JOIN comments c ON cm.comment_id = c.id
+                LEFT JOIN users u ON c.user_id = u.id
+                WHERE cm.username = ? AND cm.is_read = 0
+                ORDER BY c.created_at DESC
+            """, (username,))
+        else:
+            cursor.execute("""
+                SELECT cm.*, c.content, c.entity_type, c.entity_id, c.created_at,
+                       u.name as author_name
+                FROM comment_mentions cm
+                LEFT JOIN comments c ON cm.comment_id = c.id
+                LEFT JOIN users u ON c.user_id = u.id
+                WHERE cm.username = ?
+                ORDER BY c.created_at DESC
+            """, (username,))
+
+        rows = cursor.fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+
+    def mark_mention_read(self, mention_id: int) -> bool:
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE comment_mentions SET is_read = 1, read_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        """, (mention_id,))
+        conn.commit()
+        affected = cursor.rowcount
+        conn.close()
+        return affected > 0

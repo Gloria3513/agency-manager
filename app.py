@@ -14,7 +14,8 @@ import os
 # 데이터베이스 모델 임포트
 from database import (
     ClientDB, InquiryDB, QuotationDB, ProjectDB, TaskDB, SettingsDB,
-    CalendarDB, TimeEntryDB, TimeSessionDB, FileDB, NotificationDB
+    CalendarDB, TimeEntryDB, TimeSessionDB, FileDB, NotificationDB,
+    UserDB, TeamDB, RoleDB, ActivityLogDB, CommentDB
 )
 
 # 유틸리티 임포트
@@ -24,6 +25,8 @@ from utils import (
 )
 from utils.calendar_manager import CalendarManager
 from utils.ical_generator import ICalGenerator, generate_ical_from_events
+from utils.auth_manager import AuthManager, SessionManager, PermissionChecker, init_admin_user
+from utils.activity_logger import ActivityLogger, get_logger
 import time
 import secrets
 
@@ -56,8 +59,31 @@ if "db" not in st.session_state:
         "time_entry": TimeEntryDB(),
         "time_session": TimeSessionDB(),
         "file": FileDB(),
-        "notification": NotificationDB()
+        "notification": NotificationDB(),
+        "user": UserDB(),
+        "team": TeamDB(),
+        "role": RoleDB(),
+        "activity": ActivityLogDB(),
+        "comment": CommentDB()
     }
+
+# 기본 관리자 계정 초기화
+try:
+    init_admin_user()
+except:
+    pass
+
+# 인증 관리자
+auth_manager = AuthManager()
+session_manager = SessionManager()
+activity_logger = ActivityLogger()
+
+# 로그인 상태 확인
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+if "user" not in st.session_state:
+    st.session_state.user = None
 
 if "current_page" not in st.session_state:
     st.session_state.current_page = "dashboard"
@@ -135,11 +161,52 @@ def show_metric_card(title, value, subtitle="", color="blue"):
 def render_sidebar():
     """사이드바 렌더링"""
     with st.sidebar:
+        # 로그인되지 않은 경우
+        if not st.session_state.authenticated:
+            st.markdown("""
+                <div style="text-align: center; padding: 30px 20px;">
+                    <h1 style="font-size: 24px; margin: 0;">🚀 에이전시 관리</h1>
+                    <p style="color: #64748b; margin-top: 10px;">로그인이 필요합니다</p>
+                </div>
+            """, unsafe_allow_html=True)
+            return
+
+        # 로그인된 경우
+        user = st.session_state.user
+        role_labels = {
+            'admin': '관리자',
+            'manager': '매니저',
+            'member': '팀원',
+            'viewer': '게스트'
+        }
+        role_badge_colors = {
+            'admin': 'badge-danger',
+            'manager': 'badge-warning',
+            'member': 'badge-info',
+            'viewer': 'badge-neutral'
+        }
+
         st.markdown("""
             <div style="text-align: center; padding: 20px 0;">
                 <h1 style="font-size: 24px; margin: 0;">🚀 에이전시 관리</h1>
             </div>
         """, unsafe_allow_html=True)
+
+        # 사용자 정보
+        st.markdown(f"""
+            <div style="background: #f8fafc; padding: 15px; border-radius: 12px; margin-bottom: 15px;">
+                <div style="font-weight: 600;">👤 {user.get('name', '사용자')}</div>
+                <div style="font-size: 12px; color: #64748b;">{user.get('email', '')}</div>
+                <div style="margin-top: 5px;">
+                    <span class="badge {role_badge_color}">{role_label}</span>
+                </div>
+            </div>
+        """.format(
+            name=user.get('name', '사용자'),
+            email=user.get('email', ''),
+            role_badge_color=role_badge_colors.get(user.get('role', 'member'), 'badge-neutral'),
+            role_label=role_labels.get(user.get('role', 'member'), '팀원')
+        ), unsafe_allow_html=True)
 
         st.markdown("---")
 
@@ -156,8 +223,12 @@ def render_sidebar():
                 </style>
             """, unsafe_allow_html=True)
 
-        # 네비게이션 메뉴
+        # 네비게이션 메뉴 (권한별)
         st.markdown("### 📁 메뉴")
+
+        # 사용자 역할에 따른 메뉴 필터링
+        user_role = user.get('role', 'member')
+        accessible_menus = PermissionChecker.get_accessible_menus(user_role)
 
         menu_items = {
             "dashboard": "📊 대시보드",
@@ -166,29 +237,43 @@ def render_sidebar():
             "quotations": "💰 견적 관리",
             "contracts": "📄 계약 관리",
             "projects": "🚧 프로젝트 관리",
+            "tasks": "✅ 태스크",
             "payments": "💳 정산 관리",
             "calendar": "📅 캘린더",
             "time_tracker": "⏱️ 시간 추적",
             "files": "📁 파일 관리",
+            "reports": "📊 리포트",
+            "users": "👥 팀원 관리",
+            "activity": "📜 활동 로그",
             "settings": "⚙️ 설정",
         }
 
         for key, label in menu_items.items():
-            if st.button(label, key=f"nav_{key}", use_container_width=True,
-                        icon=None, disabled=st.session_state.current_page == key):
-                st.session_state.current_page = key
-                st.rerun()
+            if key in accessible_menus:
+                if st.button(label, key=f"nav_{key}", use_container_width=True,
+                            icon=None, disabled=st.session_state.current_page == key):
+                    st.session_state.current_page = key
+                    st.rerun()
+
+        st.markdown("---")
+
+        # 로그아웃
+        if st.button("🚪 로그아웃", use_container_width=True):
+            st.session_state.authenticated = False
+            st.session_state.user = None
+            st.session_state.current_page = "login"
+            st.rerun()
 
         st.markdown("---")
 
         # 공개 설문 링크
         st.markdown("### 🔗 공유 링크")
-        st.code("http://localhost:8501/survey", language="text")
+        st.code("http://localhost:8503/survey", language="text")
 
         st.markdown("---")
         st.markdown(f"""
             <div style="text-align: center; font-size: 12px; opacity: 0.6;">
-                버전 1.0.0
+                버전 2.0.0
             </div>
         """, unsafe_allow_html=True)
 
@@ -2214,10 +2299,274 @@ def render_file_manager():
                     st.rerun()
 
 
+# ===== 로그인 페이지 =====
+
+def render_login():
+    """로그인 페이지"""
+    st.markdown("""
+        <div style="text-align: center; padding: 60px 20px;">
+            <h1 style="font-size: 48px; margin: 0;">🚀</h1>
+            <h2 style="margin: 20px 0;">에이전시 관리 시스템</h2>
+            <p style="color: #64748b;">로그인하여 접속하세요</p>
+        </div>
+    """, unsafe_allow_html=True)
+
+    col1, col2, col3 = st.columns([1, 2, 1])
+
+    with col2:
+        with st.form("login_form"):
+            st.markdown("### 로그인")
+
+            email = st.text_input("이메일", placeholder="admin@agency.com")
+            password = st.text_input("비밀번호", type="password", placeholder="********")
+
+            col1, col2 = st.columns(2)
+            with col1:
+                submit = st.form_submit_button("로그인", type="primary", use_container_width=True)
+            with col2:
+                if st.form_submit_button("초기화"):
+                    st.rerun()
+
+            if submit and email and password:
+                user = auth_manager.authenticate(email, password)
+
+                if user:
+                    st.session_state.authenticated = True
+                    st.session_state.user = user
+                    st.session_state.current_page = "dashboard"
+
+                    # 활동 로그
+                    activity_logger.log_login(user['id'], True)
+
+                    st.success(f"환영합니다, {user['name']}님!")
+                    st.rerun()
+                else:
+                    st.error("이메일 또는 비밀번호가 올바르지 않습니다.")
+
+        # 기본 계정 정보 표시 (처음 사용자용)
+        with st.expander("기본 계정 정보"):
+            st.info("""
+            **기본 관리자 계정**
+            - 이메일: admin@agency.com
+            - 비밀번호: admin1234
+
+            ⚠️ 로그인 후 비밀번호를 변경하세요.
+            """)
+
+
+# ===== 사용자 관리 페이지 =====
+
+def render_users():
+    """사용자 관리 페이지"""
+    st.markdown("## 👥 팀원 관리")
+
+    tab1, tab2, tab3 = st.tabs(["👥 팀원 목록", "➕ 팀원 추가", "👥 팀 관리"])
+
+    # ===== 팀원 목록 =====
+    with tab1:
+        users = st.session_state.db["user"].get_all_users()
+
+        if users:
+            for user in users:
+                with st.container():
+                    col1, col2, col3 = st.columns([3, 2, 1])
+
+                    with col1:
+                        st.markdown(f"**{user['name']}**")
+                        st.caption(f"📧 {user['email']}")
+                        if user.get('department'):
+                            st.caption(f"🏢 {user['department']}")
+
+                    with col2:
+                        role_labels = {
+                            'admin': '관리자',
+                            'manager': '매니저',
+                            'member': '팀원',
+                            'viewer': '게스트'
+                        }
+                        role_badges = {
+                            'admin': 'badge-danger',
+                            'manager': 'badge-warning',
+                            'member': 'badge-info',
+                            'viewer': 'badge-neutral'
+                        }
+                        role = user.get('role', 'member')
+                        st.markdown(
+                            f'<span class="badge {role_badges.get(role, "badge-neutral")}">{role_labels.get(role, role)}</span>',
+                            unsafe_allow_html=True
+                        )
+                        if user.get('is_active'):
+                            st.markdown('<span class="badge badge-success">활성</span>', unsafe_allow_html=True)
+                        else:
+                            st.markdown('<span class="badge badge-danger">비활성</span>', unsafe_allow_html=True)
+
+                    with col3:
+                        if st.button("✏️", key=f"edit_user_{user['id']}"):
+                            st.session_state.editing_user = user['id']
+                            st.rerun()
+
+                    st.markdown("---")
+        else:
+            st.info("등록된 팀원이 없습니다.")
+
+    # ===== 팀원 추가 =====
+    with tab2:
+        with st.form("add_user_form"):
+            col1, col2 = st.columns(2)
+
+            with col1:
+                new_name = st.text_input("이름 *")
+                new_email = st.text_input("이메일 *")
+            with col2:
+                new_password = st.text_input("비밀번호 *", type="password")
+                new_role = st.selectbox("역할", ["admin", "manager", "member", "viewer"],
+                                       format_func=lambda x: {
+                                           "admin": "관리자",
+                                           "manager": "매니저",
+                                           "member": "팀원",
+                                           "viewer": "게스트"
+                                       }[x])
+
+            new_department = st.text_input("부서")
+            new_phone = st.text_input("연락처")
+
+            if st.form_submit_button("팀원 추가", type="primary", use_container_width=True):
+                if new_name and new_email and new_password:
+                    try:
+                        user_id = auth_manager.create_user(
+                            email=new_email,
+                            name=new_name,
+                            password=new_password,
+                            role=new_role,
+                            department=new_department,
+                            phone=new_phone
+                        )
+                        st.success(f"팀원이 추가되었습니다! (ID: {user_id})")
+
+                        # 활동 로그
+                        if st.session_state.user:
+                            activity_logger.log_creation(
+                                user_id=st.session_state.user['id'],
+                                entity_type="user",
+                                entity_id=user_id,
+                                entity_name=new_name
+                            )
+
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"오류가 발생했습니다: {str(e)}")
+                else:
+                    st.warning("이름, 이메일, 비밀번호는 필수 항목입니다.")
+
+    # ===== 팀 관리 =====
+    with tab3:
+        teams = st.session_state.db["team"].get_all_teams()
+
+        st.markdown("### 팀 목록")
+
+        if teams:
+            for team in teams:
+                with st.expander(f"👥 {team['name']}", expanded=False):
+                    st.caption(team.get('description', ''))
+
+                    members = st.session_state.db["team"].get_team_members(team['id'])
+
+                    if members:
+                        for member in members:
+                            st.markdown(f"- {member.get('name', '알 수 없음')} ({member.get('role', 'member')})")
+                    else:
+                        st.caption("팀원이 없습니다.")
+        else:
+            st.info("등록된 팀이 없습니다.")
+
+        with st.expander("➕ 새 팀 생성", expanded=False):
+            with st.form("create_team"):
+                team_name = st.text_input("팀 이름 *")
+                team_description = st.text_area("설명")
+
+                if st.form_submit_button("팀 생성"):
+                    if team_name:
+                        team_id = st.session_state.db["team"].create_team(
+                            name=team_name,
+                            description=team_description
+                        )
+                        st.success(f"팀이 생성되었습니다! (ID: {team_id})")
+                        st.rerun()
+
+
+# ===== 활동 로그 페이지 =====
+
+def render_activity_log():
+    """활동 로그 페이지"""
+    st.markdown("## 📜 활동 로그")
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        user_filter = st.selectbox("사용자 필터", ["전체"] + [
+            f"{u['name']} ({u['email']})" for u in st.session_state.db["user"].get_all_users()
+        ])
+
+    with col2:
+        action_filter = st.selectbox("액션 필터", ["전체", "생성", "수정", "삭제", "상태변경"])
+
+    with col3:
+        limit = st.number_input("표시 개수", min_value=10, max_value=500, value=50)
+
+    st.markdown("---")
+
+    # 활동 로그 조회
+    activities = st.session_state.db["activity"].get_activities(limit=limit)
+
+    if activities:
+        for activity in activities:
+            with st.container():
+                col1, col2 = st.columns([4, 1])
+
+                with col1:
+                    user_name = activity.get('user_name', '시스템')
+                    action_type = activity.get('action_type', '')
+                    details = activity.get('details', '')
+                    created_at = activity.get('created_at', '')
+
+                    # 액션 타입에 따른 아이콘
+                    action_icons = {
+                        'created': '➕',
+                        'updated': '✏️',
+                        'deleted': '🗑️',
+                        'status_changed': '🔄',
+                        'login': '🔐',
+                        'logout': '🚪',
+                    }
+                    icon = '📌'
+                    for key, value in action_icons.items():
+                        if key in action_type:
+                            icon = value
+                            break
+
+                    st.markdown(f"**{icon} {user_name}**")
+                    st.caption(f"📅 {format_date(created_at)}")
+                    if details:
+                        st.caption(details)
+
+                with col2:
+                    st.caption(activity.get('entity_type', ''))
+
+                st.markdown("---")
+    else:
+        st.info("활동 로그가 없습니다.")
+
+
 # ===== 메인 앱 =====
 
 def main():
     """메인 앱"""
+    # 로그인되지 않은 경우
+    if not st.session_state.authenticated:
+        render_login()
+        return
+
+    # 로그인된 경우
     render_sidebar()
 
     # 페이지 라우팅
@@ -2232,6 +2581,8 @@ def main():
         "calendar": render_calendar,
         "time_tracker": render_time_tracker,
         "files": render_file_manager,
+        "users": render_users,
+        "activity": render_activity_log,
         "settings": render_settings,
     }
 

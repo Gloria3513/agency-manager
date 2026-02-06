@@ -26,6 +26,10 @@ try:
     from .notification_manager import NotificationManager, NotificationTemplate, send_bulk_notifications
     from .notification_rules import NotificationRule, NotificationEventType, get_rule, get_all_rules, check_and_notify
     from .portal_auth import PortalAuth, PortalSession, generate_portal_link, validate_portal_token
+    from .auth_manager import AuthManager, SessionManager, PermissionChecker, init_admin_user
+    from .activity_logger import ActivityLogger, get_logger
+    from .workflow_engine import WorkflowEngine, Workflow, Action, TriggerType, ActionType
+    from .workflow_templates import WorkflowTemplates, WorkflowBuilder, init_default_workflows
 
     __all__.extend([
         'CalendarManager',
@@ -53,6 +57,20 @@ try:
         'PortalSession',
         'generate_portal_link',
         'validate_portal_token',
+        'AuthManager',
+        'SessionManager',
+        'PermissionChecker',
+        'init_admin_user',
+        'ActivityLogger',
+        'get_logger',
+        'WorkflowEngine',
+        'Workflow',
+        'Action',
+        'TriggerType',
+        'ActionType',
+        'WorkflowTemplates',
+        'WorkflowBuilder',
+        'init_default_workflows',
     ])
 except ImportError:
     pass
