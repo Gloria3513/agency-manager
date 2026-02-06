@@ -4,3 +4,10 @@ plotly>=6.0.0
 python-docx>=1.0.0
 reportlab>=4.0.0
 openai>=1.0.0
+
+# 4단계 추가 의존성
+apscheduler>=3.10.0       # 백그라운드 스케줄링
+pillow>=10.0.0            # 이미지 처리
+openpyxl>=3.1.0           # Excel 내보내기
+python-magic>=0.4.27      # MIME 타입 감지
+cryptography>=41.0.0      # 토큰 보안

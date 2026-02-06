@@ -15,3 +15,44 @@ __all__ = [
     'SignatureVerifier',
     'generate_contract_pdf_content',
 ]
+
+# Import utilities that need database
+try:
+    from .calendar_manager import CalendarManager, EventConflictChecker
+    from .ical_generator import ICalGenerator, generate_ical_from_events
+    from .analytics import RevenueAnalyzer, CustomerAnalyzer, ProjectAnalyzer, AIUsageAnalyzer, DashboardAnalytics
+    from .chart_generator import ChartGenerator, create_dashboard_charts
+    from .invoice_generator import InvoiceGenerator, generate_timesheet_report
+    from .notification_manager import NotificationManager, NotificationTemplate, send_bulk_notifications
+    from .notification_rules import NotificationRule, NotificationEventType, get_rule, get_all_rules, check_and_notify
+    from .portal_auth import PortalAuth, PortalSession, generate_portal_link, validate_portal_token
+
+    __all__.extend([
+        'CalendarManager',
+        'EventConflictChecker',
+        'ICalGenerator',
+        'generate_ical_from_events',
+        'RevenueAnalyzer',
+        'CustomerAnalyzer',
+        'ProjectAnalyzer',
+        'AIUsageAnalyzer',
+        'DashboardAnalytics',
+        'ChartGenerator',
+        'create_dashboard_charts',
+        'InvoiceGenerator',
+        'generate_timesheet_report',
+        'NotificationManager',
+        'NotificationTemplate',
+        'send_bulk_notifications',
+        'NotificationRule',
+        'NotificationEventType',
+        'get_rule',
+        'get_all_rules',
+        'check_and_notify',
+        'PortalAuth',
+        'PortalSession',
+        'generate_portal_link',
+        'validate_portal_token',
+    ])
+except ImportError:
+    pass

@@ -13,7 +13,8 @@ import os
 
 # 데이터베이스 모델 임포트
 from database import (
-    ClientDB, InquiryDB, QuotationDB, ProjectDB, TaskDB, SettingsDB
+    ClientDB, InquiryDB, QuotationDB, ProjectDB, TaskDB, SettingsDB,
+    CalendarDB, TimeEntryDB, TimeSessionDB, FileDB, NotificationDB
 )
 
 # 유틸리티 임포트
@@ -21,6 +22,8 @@ from utils import (
     AIQuotationGenerator, PDFQuotationGenerator, EmailSender,
     ContractGenerator, SignatureVerifier
 )
+from utils.calendar_manager import CalendarManager
+from utils.ical_generator import ICalGenerator, generate_ical_from_events
 import time
 import secrets
 
@@ -48,7 +51,12 @@ if "db" not in st.session_state:
         "quotation": QuotationDB(),
         "project": ProjectDB(),
         "task": TaskDB(),
-        "settings": SettingsDB()
+        "settings": SettingsDB(),
+        "calendar": CalendarDB(),
+        "time_entry": TimeEntryDB(),
+        "time_session": TimeSessionDB(),
+        "file": FileDB(),
+        "notification": NotificationDB()
     }
 
 if "current_page" not in st.session_state:
@@ -159,6 +167,9 @@ def render_sidebar():
             "contracts": "📄 계약 관리",
             "projects": "🚧 프로젝트 관리",
             "payments": "💳 정산 관리",
+            "calendar": "📅 캘린더",
+            "time_tracker": "⏱️ 시간 추적",
+            "files": "📁 파일 관리",
             "settings": "⚙️ 설정",
         }
 
@@ -1456,9 +1467,9 @@ def render_payments():
 
                     with col1:
                         st.markdown(f"#### {payment.get('invoice_number', '-')}")
-                        st.markdown(f"**프로젝트:** {payment.get('project_name', '-'}")
-                        st.markdown(f"**고객:** {payment.get('client_name', '-'}")
-                        st.markdown(f"**결제 유형:** {payment.get('payment_type', '-'}")
+                        st.markdown(f"**프로젝트:** {payment.get('project_name', '-')}")
+                        st.markdown(f"**고객:** {payment.get('client_name', '-')}")
+                        st.markdown(f"**결제 유형:** {payment.get('payment_type', '-')}")
                         st.markdown(f"**금액:** {format_currency(int(payment['amount']))}")
                         st.markdown(f"**입금 예정일:** {format_date(payment.get('due_date'))}")
                         st.markdown(f"**비고:** {payment.get('notes', '-')}")
@@ -1527,6 +1538,682 @@ def render_payments():
             st.info("등록된 결제 내역이 없습니다.")
 
 
+# ===== 캘린더 페이지 =====
+
+def render_calendar():
+    """캘린더 페이지"""
+    st.markdown("## 📅 캘린더")
+
+    # 뷰 모드 선택
+    col1, col2, col3 = st.columns([2, 1, 1])
+    with col1:
+        view_mode = st.radio("뷰 모드", ["월간 보기", "주간 보기", "리스트 보기"], horizontal=True)
+    with col2:
+        if st.button("🔄 동기화", use_container_width=True):
+            cal_manager = CalendarManager(st.session_state.db["calendar"])
+            task_count = cal_manager.sync_from_tasks()
+            payment_count = cal_manager.sync_from_payments()
+            st.success(f"태스크 {task_count}개, 결제 {payment_count}개 동기화 완료!")
+            st.rerun()
+    with col3:
+        if st.button("📥 내보내기", use_container_width=True):
+            events = st.session_state.db["calendar"].get_all_events()
+            if events:
+                ical_data = generate_ical_from_events(events)
+                st.download_button(
+                    label="⬇️ iCal 파일 다운로드",
+                    data=ical_data,
+                    file_name=f"calendar_{datetime.now().strftime('%Y%m%d')}.ics",
+                    mime="text/calendar",
+                    use_container_width=True
+                )
+
+    st.markdown("---")
+
+    cal_manager = CalendarManager(st.session_state.db["calendar"])
+
+    # 날짜 네비게이션
+    if "current_month" not in st.session_state:
+        st.session_state.current_month = datetime.now().month
+    if "current_year" not in st.session_state:
+        st.session_state.current_year = datetime.now().year
+
+    col1, col2, col3, col4 = st.columns([1, 2, 2, 1])
+    with col1:
+        if st.button("◀ 이전"):
+            if st.session_state.current_month == 1:
+                st.session_state.current_month = 12
+                st.session_state.current_year -= 1
+            else:
+                st.session_state.current_month -= 1
+            st.rerun()
+    with col4:
+        if st.button("다음 ▶"):
+            if st.session_state.current_month == 12:
+                st.session_state.current_month = 1
+                st.session_state.current_year += 1
+            else:
+                st.session_state.current_month += 1
+            st.rerun()
+
+    with col2:
+        pass  # Spacer
+    with col3:
+        st.markdown(f"#### {st.session_state.current_year}년 {st.session_state.current_month}월")
+
+    st.markdown("")
+
+    # 월간 보기
+    if view_mode == "월간 보기":
+        render_monthly_view(cal_manager)
+
+    # 주간 보기
+    elif view_mode == "주간 보기":
+        render_weekly_view(cal_manager)
+
+    # 리스트 보기
+    else:
+        render_list_view(cal_manager)
+
+    # 이벤트 추가 모달
+    with st.expander("➕ 새 이벤트 추가", expanded=False):
+        with st.form("add_event_form"):
+            col1, col2 = st.columns(2)
+            with col1:
+                event_title = st.text_input("이벤트 제목 *")
+                event_type = st.selectbox("이벤트 유형",
+                                         ["general", "meeting", "deadline", "task", "payment"],
+                                         format_func=lambda x: {
+                                             "general": "일반",
+                                             "meeting": "회의",
+                                             "deadline": "마감",
+                                             "task": "태스크",
+                                             "payment": "결제"
+                                         }[x])
+            with col2:
+                event_date = st.date_input("날짜", value=datetime.now().date())
+                all_day = st.checkbox("종일 이벤트", value=True)
+
+            if not all_day:
+                col1, col2 = st.columns(2)
+                with col1:
+                    event_time = st.time_input("시작 시간")
+                with col2:
+                    end_time = st.time_input("종료 시간")
+
+            col1, col2 = st.columns(2)
+            with col1:
+                event_location = st.text_input("장소")
+            with col2:
+                event_color = st.color_picker("색상", "#3b82f6")
+
+            event_description = st.text_area("설명")
+
+            col1, col2 = st.columns(2)
+            with col1:
+                submit = st.form_submit_button("이벤트 추가", use_container_width=True)
+
+            if submit and event_title:
+                start_datetime = f"{event_date} 00:00:00" if all_day else f"{event_date} {event_time}"
+                end_datetime = None if all_day else f"{event_date} {end_time}"
+
+                event_id = st.session_state.db["calendar"].add_event(
+                    title=event_title,
+                    start_date=start_datetime,
+                    end_date=end_datetime,
+                    event_type=event_type,
+                    description=event_description,
+                    location=event_location,
+                    all_day=all_day,
+                    color=event_color
+                )
+                st.success(f"이벤트가 추가되었습니다! (ID: {event_id})")
+                st.rerun()
+
+
+def render_monthly_view(cal_manager: CalendarManager):
+    """월간 캘린더 렌더링"""
+    import calendar
+
+    year = st.session_state.current_year
+    month = st.session_state.current_month
+
+    # 월의 첫날과 마지막 날
+    first_day = datetime(year, month, 1)
+    last_day = calendar.monthrange(year, month)[1]
+
+    # 해당 월의 이벤트 가져오기
+    events = cal_manager.get_month_events(year, month)
+
+    # 캘린더 그리드 생성
+    cal = calendar.Calendar(firstweekday=calendar.SUNDAY)
+    days = cal.monthdayscalendar(year, month)
+
+    # 요일 헤더
+    weekdays = ["일", "월", "화", "수", "목", "금", "토"]
+
+    # 캘린더 HTML 생성
+    st.markdown(f"""
+        <div class="calendar-grid">
+    """, unsafe_allow_html=True)
+
+    # 요일 헤더
+    for day in weekdays:
+        st.markdown(f'<div class="calendar-day-header">{day}</div>', unsafe_allow_html=True)
+
+    # 날짜 셀
+    today = datetime.now().date()
+    for week in days:
+        for day in week:
+            if day == 0:
+                # 이전/다음 달 날짜
+                st.markdown('<div class="calendar-day other-month"></div>', unsafe_allow_html=True)
+            else:
+                current_date = f"{year}-{month:02d}-{day:02d}"
+                is_today = (today.year == year and today.month == month and today.day == day)
+
+                # 해당 날짜의 이벤트 찾기
+                day_events = [e for e in events if e['start_date'].startswith(current_date)]
+
+                event_html = ""
+                for event in day_events[:3]:  # 최대 3개 표시
+                    title = event['title']
+                    event_html += f'<div class="calendar-event {event.get("event_type", "general")}" title="{title}">{title}</div>'
+
+                if len(day_events) > 3:
+                    event_html += f'<div class="calendar-event general">+{len(day_events) - 3} 더보기</div>'
+
+                today_class = "today" if is_today else ""
+
+                st.markdown(f"""
+                    <div class="calendar-day {today_class}" onclick="selectDate('{current_date}')">
+                        <div class="calendar-day-number">{day}</div>
+                        {event_html}
+                    </div>
+                """, unsafe_allow_html=True)
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+
+def render_weekly_view(cal_manager: CalendarManager):
+    """주간 캘린더 렌더링"""
+    from datetime import timedelta
+
+    current_date = datetime(st.session_state.current_year, st.session_state.current_month, 1)
+    start_of_week = current_date - timedelta(days=current_date.weekday())
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if st.button("◀ 이전 주"):
+            st.session_state.current_week_start = (start_of_week - timedelta(weeks=1)).strftime("%Y-%m-%d")
+            st.rerun()
+    with col3:
+        if st.button("다음 주 ▶"):
+            st.session_state.current_week_start = (start_of_week + timedelta(weeks=1)).strftime("%Y-%m-%d")
+            st.rerun()
+
+    week_start = start_of_week
+    weekdays = ["월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일"]
+
+    for i in range(7):
+        day = week_start + timedelta(days=i)
+        date_str = day.strftime("%Y-%m-%d")
+        events = cal_manager.get_events_by_date(date_str)
+
+        with st.container():
+            st.markdown(f"""
+                <div class="weekly-day">
+                    <div class="weekly-day-header">
+                        <span class="weekly-day-name">{weekdays[i]} {day.month}/{day.day}</span>
+                        <span class="weekly-day-date">{date_str}</span>
+                    </div>
+                """, unsafe_allow_html=True)
+
+            if events:
+                for event in events:
+                    col1, col2 = st.columns([4, 1])
+                    with col1:
+                        st.markdown(f"""
+                            <div class="calendar-event {event.get('event_type', 'general')}">
+                                <strong>{event['title']}</strong>
+                            </div>
+                        """, unsafe_allow_html=True)
+                        if event.get('description'):
+                            st.caption(event['description'])
+                    with col2:
+                        if st.button("🗑️", key=f"del_{event['id']}"):
+                            st.session_state.db["calendar"].delete_event(event['id'])
+                            st.rerun()
+            else:
+                st.caption("이벤트 없음")
+
+            st.markdown('</div>', unsafe_allow_html=True)
+
+
+def render_list_view(cal_manager: CalendarManager):
+    """리스트 뷰 렌더링"""
+    events = st.session_state.db["calendar"].get_all_events()
+
+    if events:
+        # 필터
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            type_filter = st.selectbox("유형 필터", ["all", "general", "meeting", "deadline", "task", "payment"],
+                                      format_func=lambda x: {
+                                          "all": "전체",
+                                          "general": "일반",
+                                          "meeting": "회의",
+                                          "deadline": "마감",
+                                          "task": "태스크",
+                                          "payment": "결제"
+                                      }[x], key="type_filter")
+
+        filtered_events = events
+        if type_filter != "all":
+            filtered_events = [e for e in events if e.get('event_type') == type_filter]
+
+        # 날짜순 정렬
+        filtered_events = sorted(filtered_events, key=lambda x: x['start_date'])
+
+        for event in filtered_events:
+            with st.container():
+                col1, col2, col3 = st.columns([4, 2, 1])
+
+                with col1:
+                    st.markdown(f"**{event['title']}**")
+                    st.caption(f"📅 {format_date(event['start_date'])}")
+                    if event.get('description'):
+                        st.caption(event['description'])
+
+                with col2:
+                    type_labels = {
+                        "general": "일반",
+                        "meeting": "회의",
+                        "deadline": "마감",
+                        "task": "태스크",
+                        "payment": "결제"
+                    }
+                    st.markdown(f'<span class="badge badge-info">{type_labels.get(event.get("event_type", "general"), "일반")}</span>',
+                               unsafe_allow_html=True)
+
+                with col3:
+                    if st.button("🗑️", key=f"list_del_{event['id']}"):
+                        st.session_state.db["calendar"].delete_event(event['id'])
+                        st.rerun()
+
+                st.markdown("---")
+    else:
+        st.info("등록된 이벤트가 없습니다.")
+
+
+# ===== 시간 추적 페이지 =====
+
+def render_time_tracker():
+    """시간 추적 페이지"""
+    st.markdown("## ⏱️ 시간 추적")
+
+    tab1, tab2, tab3 = st.tabs(["⏱️ 타이머", "📝 수동 입력", "📊 리포트"])
+
+    # ===== 타이머 =====
+    with tab1:
+        st.markdown("### 실시간 타이머")
+
+        projects = st.session_state.db["project"].get_all_projects()
+        if projects:
+            col1, col2 = st.columns(2)
+            with col1:
+                project_options = {f"{p['name']} ({p.get('client_name', '-')})": p['id'] for p in projects}
+                selected_project = st.selectbox("프로젝트 선택", list(project_options.keys()))
+
+            with col2:
+                if selected_project:
+                    project_id = project_options[selected_project]
+                    tasks = st.session_state.db["task"].get_project_tasks(project_id)
+                    task_options = {"태스크 없음": None}
+                    for t in tasks:
+                        task_options[f"{t['title']}"] = t['id']
+                    selected_task = st.selectbox("태스크 선택 (선택사항)", list(task_options.keys()))
+
+            timer_title = st.text_input("작업 제목")
+
+            # 진행 중인 세션 확인
+            active_session = st.session_state.db["time_session"].get_active_session(
+                project_id if selected_project else None
+            )
+
+            col1, col2, col3 = st.columns([1, 1, 1])
+
+            with col1:
+                if active_session:
+                    if st.button("⏹️ 정지", use_container_width=True, type="primary"):
+                        st.session_state.db["time_session"].stop_session(active_session['id'])
+                        st.success("타이머가 정지되었습니다.")
+                        st.rerun()
+                else:
+                    if st.button("▶️ 시작", use_container_width=True, type="primary"):
+                        if selected_project:
+                            task_id = task_options[selected_task] if selected_task != "태스크 없음" else None
+                            st.session_state.db["time_session"].start_session(
+                                project_id=project_id,
+                                task_id=task_id,
+                                title=timer_title or "작업"
+                            )
+                            st.success("타이머가 시작되었습니다.")
+                            st.rerun()
+
+            with col2:
+                if st.button("⏸️ 일시정지", use_container_width=True):
+                    st.info("일시정지 기능은 준비 중입니다.")
+
+            with col3:
+                if active_session:
+                    # 경과 시간 계산
+                    start = datetime.fromisoformat(active_session['start_time'])
+                    elapsed = datetime.now() - start
+                    hours, remainder = divmod(elapsed.seconds, 3600)
+                    minutes, _ = divmod(remainder, 60)
+
+                    st.markdown(f"""
+                        <div class="timer-display">
+                            {elapsed.days * 24 + hours:02d}:{minutes:02d}
+                        </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    st.markdown("""
+                        <div class="timer-display">
+                            00:00
+                        </div>
+                    """, unsafe_allow_html=True)
+
+        else:
+            st.warning("먼저 프로젝트를 생성해주세요.")
+
+    # ===== 수동 입력 =====
+    with tab2:
+        st.markdown("### 수동 시간 입력")
+
+        with st.form("add_time_entry"):
+            col1, col2 = st.columns(2)
+            with col1:
+                project_options = {f"{p['name']}": p['id'] for p in projects}
+                entry_project = st.selectbox("프로젝트 *", list(project_options.keys()) if projects else [])
+                entry_date = st.date_input("날짜", value=datetime.now().date())
+
+            with col2:
+                if entry_project:
+                    entry_project_id = project_options[entry_project]
+                    entry_tasks = st.session_state.db["task"].get_project_tasks(entry_project_id)
+                    entry_task_options = {"태스크 없음": None}
+                    for t in entry_tasks:
+                        entry_task_options[f"{t['title']}"] = t['id']
+                    entry_task = st.selectbox("태스크", list(entry_task_options.keys()))
+
+            entry_title = st.text_input("작업 제목 *")
+            entry_duration = st.number_input("소요 시간 (분)", min_value=1, value=60)
+            entry_billable = st.checkbox("청구 가능", value=True)
+            entry_hourly_rate = st.number_input("시간당 단가 (원)", min_value=0, value=0)
+            entry_description = st.text_area("설명")
+
+            if st.form_submit_button("시간 기록 추가", use_container_width=True):
+                if entry_project and entry_title:
+                    task_id = entry_task_options[entry_task] if entry_task != "태스크 없음" else None
+
+                    st.session_state.db["time_entry"].add_entry(
+                        project_id=project_options[entry_project],
+                        title=entry_title,
+                        duration_minutes=entry_duration,
+                        entry_date=entry_date.isoformat(),
+                        task_id=task_id,
+                        description=entry_description,
+                        billable=entry_billable,
+                        hourly_rate=entry_hourly_rate
+                    )
+                    st.success("시간 기록이 추가되었습니다.")
+                    st.rerun()
+
+        # 최근 시간 기록
+        st.markdown("### 최근 기록")
+        if projects:
+            recent_entries = st.session_state.db["time_entry"].get_entries_by_date_range(
+                (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d"),
+                datetime.now().strftime("%Y-%m-%d")
+            )
+
+            if recent_entries:
+                for entry in recent_entries:
+                    col1, col2, col3 = st.columns([3, 2, 1])
+                    with col1:
+                        st.markdown(f"**{entry['title']}**")
+                        st.caption(f"📅 {format_date(entry['entry_date'])}")
+                    with col2:
+                        hours = entry['duration_minutes'] / 60
+                        st.markdown(f"⏱️ {hours:.1f}시간")
+                        if entry['billable']:
+                            st.markdown('<span class="billable-badge yes">청구가능</span>', unsafe_allow_html=True)
+                    with col3:
+                        if st.button("🗑️", key=f"time_{entry['id']}"):
+                            st.session_state.db["time_entry"].delete_entry(entry['id'])
+                            st.rerun()
+                    st.markdown("---")
+            else:
+                st.info("최근 기록이 없습니다.")
+
+    # ===== 리포트 =====
+    with tab3:
+        st.markdown("### 시간 리포트")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            report_start = st.date_input("시작일", value=(datetime.now() - timedelta(days=30)).date())
+        with col2:
+            report_end = st.date_input("종료일", value=datetime.now().date())
+
+        # 기간별 총 시간
+        total_hours = st.session_state.db["time_entry"].get_total_hours(
+            start_date=report_start.isoformat(),
+            end_date=report_end.isoformat()
+        )
+        billable_hours = st.session_state.db["time_entry"].get_total_hours(
+            start_date=report_start.isoformat(),
+            end_date=report_end.isoformat(),
+            billable_only=True
+        )
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("총 작업 시간", f"{total_hours:.1f}시간")
+        with col2:
+            st.metric("청구 가능 시간", f"{billable_hours:.1f}시간")
+        with col3:
+            st.metric("청구 불가 시간", f"{total_hours - billable_hours:.1f}시간")
+
+        st.markdown("---")
+
+        # 프로젝트별 시간
+        st.markdown("### 프로젝트별 작업 시간")
+
+        project_times = {}
+        for project in projects:
+            hours = st.session_state.db["time_entry"].get_total_hours(
+                project_id=project['id'],
+                start_date=report_start.isoformat(),
+                end_date=report_end.isoformat()
+            )
+            if hours > 0:
+                project_times[project['name']] = hours
+
+        if project_times:
+            df_times = pd.DataFrame([
+                {"프로젝트": k, "시간": f"{v:.1f}시간"}
+                for k, v in sorted(project_times.items(), key=lambda x: x[1], reverse=True)
+            ])
+            st.dataframe(df_times, use_container_width=True, hide_index=True)
+        else:
+            st.info("기록된 시간이 없습니다.")
+
+
+# ===== 파일 관리 페이지 =====
+
+def render_file_manager():
+    """파일 관리 페이지"""
+    st.markdown("## 📁 파일 관리")
+
+    projects = st.session_state.db["project"].get_all_projects()
+
+    if not projects:
+        st.warning("먼저 프로젝트를 생성해주세요.")
+        return
+
+    tab1, tab2 = st.tabs(["📁 파일 목록", "⬆️ 업로드"])
+
+    # ===== 파일 목록 =====
+    with tab1:
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            project_options = {f"{p['name']}": p['id'] for p in projects}
+            file_project = st.selectbox("프로젝트 선택", list(project_options.keys()))
+        with col2:
+            category_filter = st.selectbox("카테고리", ["전체", "general", "design", "document", "code", "other"],
+                                          format_func=lambda x: {
+                                              "전체": "전체",
+                                              "general": "일반",
+                                              "design": "디자인",
+                                              "document": "문서",
+                                              "code": "코드",
+                                              "other": "기타"
+                                          }[x], key="file_cat_filter")
+
+        if file_project:
+            project_id = project_options[file_project]
+
+            # 업로드 디렉토리 확인
+            upload_dir = Path(__file__).parent / "data" / "uploads" / str(project_id)
+            upload_dir.mkdir(parents=True, exist_ok=True)
+
+            # 파일 목록 조회
+            if category_filter == "전체":
+                files = st.session_state.db["file"].get_files_by_project(project_id)
+            else:
+                files = st.session_state.db["file"].get_files_by_category(project_id, category_filter)
+
+            if files:
+                # 파일 그리드 표시
+                for file in files:
+                    col1, col2, col3 = st.columns([3, 2, 1])
+
+                    with col1:
+                        # 파일 아이콘
+                        mime_type = file.get('mime_type', '')
+                        if mime_type.startswith('image/'):
+                            icon = "🖼️"
+                        elif mime_type == 'application/pdf':
+                            icon = "📄"
+                        elif mime_type.startswith('video/'):
+                            icon = "🎬"
+                        elif mime_type.startswith('audio/'):
+                            icon = "🎵"
+                        else:
+                            icon = "📎"
+
+                        st.markdown(f"**{icon} {file['filename']}**")
+                        st.caption(f"버전 {file['version']} • {file.get('uploaded_by', 'admin')}")
+
+                    with col2:
+                        # 카테고리
+                        cat_labels = {
+                            "general": "일반",
+                            "design": "디자인",
+                            "document": "문서",
+                            "code": "코드",
+                            "other": "기타"
+                        }
+                        st.markdown(f'<span class="badge badge-neutral">{cat_labels.get(file.get("category", "general"), "일반")}</span>',
+                                   unsafe_allow_html=True)
+                        if file.get('description'):
+                            st.caption(file['description'])
+
+                    with col3:
+                        if st.button("🗑️", key=f"file_{file['id']}"):
+                            st.session_state.db["file"].delete_file(file['id'])
+                            st.success("파일이 삭제되었습니다.")
+                            st.rerun()
+
+                    st.markdown("---")
+            else:
+                st.info("등록된 파일이 없습니다.")
+
+    # ===== 업로드 =====
+    with tab2:
+        with st.form("upload_file"):
+            upload_project = st.selectbox("프로젝트 선택 *", list(project_options.keys()))
+
+            col1, col2 = st.columns(2)
+            with col1:
+                uploaded_file = st.file_uploader("파일 선택", type=[
+                    'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
+                    'jpg', 'jpeg', 'png', 'gif', 'svg',
+                    'zip', 'txt', 'md'
+                ])
+            with col2:
+                file_category = st.selectbox("카테고리", ["general", "design", "document", "code", "other"],
+                                            format_func=lambda x: {
+                                                "general": "일반",
+                                                "design": "디자인",
+                                                "document": "문서",
+                                                "code": "코드",
+                                                "other": "기타"
+                                            }[x])
+
+            file_description = st.text_area("설명")
+
+            if st.form_submit_button("파일 업로드", use_container_width=True):
+                if upload_project and uploaded_file:
+                    project_id = project_options[upload_project]
+
+                    # 파일 저장
+                    upload_dir = Path(__file__).parent / "data" / "uploads" / str(project_id)
+                    upload_dir.mkdir(parents=True, exist_ok=True)
+
+                    file_path = upload_dir / uploaded_file.name
+                    with open(file_path, 'wb') as f:
+                        f.write(uploaded_file.getbuffer())
+
+                    # MIME 타입 감지 (간단 구현)
+                    mime_type = uploaded_file.type
+                    if not mime_type:
+                        ext = uploaded_file.name.split('.')[-1].lower()
+                        mime_map = {
+                            'pdf': 'application/pdf',
+                            'jpg': 'image/jpeg',
+                            'jpeg': 'image/jpeg',
+                            'png': 'image/png',
+                            'gif': 'image/gif',
+                            'svg': 'image/svg+xml',
+                            'doc': 'application/msword',
+                            'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                            'xls': 'application/vnd.ms-excel',
+                            'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                            'zip': 'application/zip',
+                            'txt': 'text/plain',
+                            'md': 'text/markdown',
+                        }
+                        mime_type = mime_map.get(ext, 'application/octet-stream')
+
+                    # 데이터베이스에 저장
+                    file_id = st.session_state.db["file"].add_file(
+                        project_id=project_id,
+                        filename=uploaded_file.name,
+                        file_path=str(file_path),
+                        file_size=uploaded_file.size,
+                        mime_type=mime_type,
+                        category=file_category,
+                        description=file_description
+                    )
+
+                    st.success(f"파일이 업로드되었습니다! (ID: {file_id})")
+                    st.rerun()
+
+
 # ===== 메인 앱 =====
 
 def main():
@@ -1542,6 +2229,9 @@ def main():
         "contracts": render_contracts,
         "projects": render_projects,
         "payments": render_payments,
+        "calendar": render_calendar,
+        "time_tracker": render_time_tracker,
+        "files": render_file_manager,
         "settings": render_settings,
     }
 
