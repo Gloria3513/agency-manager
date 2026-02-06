@@ -30,6 +30,8 @@ try:
     from .activity_logger import ActivityLogger, get_logger
     from .workflow_engine import WorkflowEngine, Workflow, Action, TriggerType, ActionType
     from .workflow_templates import WorkflowTemplates, WorkflowBuilder, init_default_workflows
+    from .excel_exporter import export_clients_to_excel, export_projects_to_excel, export_payments_to_excel
+    from .pdf_reports import generate_monthly_report_pdf, generate_project_report_pdf
 
     __all__.extend([
         'CalendarManager',
@@ -71,6 +73,11 @@ try:
         'WorkflowTemplates',
         'WorkflowBuilder',
         'init_default_workflows',
+        'export_clients_to_excel',
+        'export_projects_to_excel',
+        'export_payments_to_excel',
+        'generate_monthly_report_pdf',
+        'generate_project_report_pdf',
     ])
 except ImportError:
     pass

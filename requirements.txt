@@ -11,3 +11,8 @@ pillow>=10.0.0            # 이미지 처리
 openpyxl>=3.1.0           # Excel 내보내기
 python-magic>=0.4.27      # MIME 타입 감지
 cryptography>=41.0.0      # 토큰 보안
+
+# 5단계 추가 의존성
+requests>=2.31.0          # HTTP 요청 (Slack, 결제 GW 연동)
+google-auth-oauthlib>=1.0.0 # Google OAuth
+google-api-python-client>=2.100.0 # Google Calendar API
