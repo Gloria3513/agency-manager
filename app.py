@@ -322,7 +322,7 @@ def render_sidebar():
 
         # 공개 설문 링크
         st.markdown("### 🔗 공유 링크")
-        st.code("http://localhost:8503/survey", language="text")
+        st.code("http://localhost:8505", language="text")
 
         st.markdown("---")
         st.markdown(f"""
