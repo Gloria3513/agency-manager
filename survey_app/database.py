@@ -15,7 +15,8 @@ class Database:
 
     def __init__(self, db_path: str = None):
         if db_path is None:
-            db_path = Path(__file__).parent / "data" / "agency.db"
+            # 상위 폴더의 data/agency.db를 사용 (관리자 앱과 동일한 DB)
+            db_path = Path(__file__).parent.parent / "data" / "agency.db"
         self.db_path = db_path
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self.init_database()

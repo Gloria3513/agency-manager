@@ -737,55 +737,80 @@ def render_quotations():
 
     # ===== 수동 생성 =====
     with tab2:
+        # 품목 리스트 세션 상태 초기화
+        if "quotation_items" not in st.session_state:
+            st.session_state.quotation_items = []
+
         with st.expander("➕ 새 견적서 생성", expanded=False):
-            with st.form("new_quotation"):
-                clients = st.session_state.db["client"].get_all_clients()
-                if clients:
-                    client_options = {f"{c['id']} - {c['name']} ({c.get('company', '')})": c['id'] for c in clients}
-                    selected_client = st.selectbox("고객 선택 *", list(client_options.keys()))
+            clients = st.session_state.db["client"].get_all_clients()
+            if clients:
+                client_options = {f"{c['id']} - {c['name']} ({c.get('company', '')})": c['id'] for c in clients}
+                selected_client = st.selectbox("고객 선택 *", list(client_options.keys()), key="quotation_client")
 
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        item_name = st.text_input("품목명")
-                        item_qty = st.number_input("수량", min_value=1, value=1)
-                    with col2:
-                        item_price = st.number_input("단가 (원)", min_value=0, value=0)
+                st.markdown("---")
+                st.markdown("### 📦 품목 추가")
 
-                    add_item = st.form_submit_button("품목 추가")
+                col1, col2, col3 = st.columns([2, 1, 1])
+                with col1:
+                    item_name = st.text_input("품목명", key="quotation_item_name")
+                with col2:
+                    item_qty = st.number_input("수량", min_value=1, value=1, key="quotation_item_qty")
+                with col3:
+                    item_price = st.number_input("단가 (원)", min_value=0, value=0, key="quotation_item_price")
 
-                    # 품목 리스트 세션 상태
-                    if "quotation_items" not in st.session_state:
-                        st.session_state.quotation_items = []
-
-                    if add_item and item_name:
-                        st.session_state.quotation_items.append({
-                            "name": item_name,
-                            "quantity": item_qty,
-                            "price": item_price,
-                            "amount": item_qty * item_price
-                        })
-
-                    # 품목 목록 표시
-                    if st.session_state.quotation_items:
-                        st.markdown("**품목 목록:**")
-                        for i, item in enumerate(st.session_state.quotation_items):
-                            st.markdown(f"- {item['name']} x {item['quantity']} = {format_currency(item['amount'])}")
-
-                        total = sum(item['amount'] for item in st.session_state.quotation_items)
-                        st.markdown(f"**합계: {format_currency(total)}**")
-
-                        if st.form_submit_button("견적서 저장", width='stretch'):
-                            client_id = client_options[selected_client]
-                            quotation_id = st.session_state.db["quotation"].add_quotation(
-                                client_id=client_id,
-                                items=st.session_state.quotation_items,
-                                total_amount=total
-                            )
-                            st.session_state.quotation_items = []
-                            st.success(f"견적서가 생성되었습니다. (ID: {quotation_id})")
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("➕ 품목 추가"):
+                        if item_name:
+                            st.session_state.quotation_items.append({
+                                "name": item_name,
+                                "quantity": item_qty,
+                                "price": item_price,
+                                "amount": item_qty * item_price
+                            })
                             st.rerun()
-                else:
-                    st.warning("먼저 고객을 등록해주세요.")
+                        else:
+                            st.warning("품목명을 입력해주세요.")
+
+                with col2:
+                    if st.button("🗑️ 품목 초기화"):
+                        st.session_state.quotation_items = []
+                        st.rerun()
+
+                # 품목 목록 표시
+                if st.session_state.quotation_items:
+                    st.markdown("---")
+                    st.markdown("### 📋 품목 목록")
+
+                    for i, item in enumerate(st.session_state.quotation_items):
+                        col1, col2, col3 = st.columns([3, 1, 1])
+                        with col1:
+                            st.markdown(f"**{item['name']}**")
+                        with col2:
+                            st.markdown(f"x {item['quantity']}")
+                        with col3:
+                            if st.button("삭제", key=f"del_{i}"):
+                                st.session_state.quotation_items.pop(i)
+                                st.rerun()
+                        st.markdown(f"단가: {format_currency(item['price'])} = **{format_currency(item['amount'])}**")
+                        st.markdown("---")
+
+                    total = sum(item['amount'] for item in st.session_state.quotation_items)
+                    st.markdown(f"### 💰 총합계: {format_currency(total)}")
+
+                    st.markdown("---")
+                    if st.button("💾 견적서 저장", type="primary", width='stretch'):
+                        client_id = client_options[selected_client]
+                        quotation_id = st.session_state.db["quotation"].add_quotation(
+                            client_id=client_id,
+                            items=st.session_state.quotation_items,
+                            total_amount=total
+                        )
+                        st.session_state.quotation_items = []
+                        st.success(f"🎉 견적서가 생성되었습니다! (ID: {quotation_id})")
+                        st.rerun()
+            else:
+                st.warning("먼저 고객을 등록해주세요.")
 
     # ===== 견적서 목록 =====
     with tab3:
