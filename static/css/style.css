@@ -1,0 +1,217 @@
+/* Streamlit 커스텀 CSS */
+
+/* 다크 모드 변수 */
+:root {
+    --primary-color: #2563eb;
+    --primary-dark: #1d4ed8;
+    --primary-light: #3b82f6;
+    --success-color: #10b981;
+    --warning-color: #f59e0b;
+    --danger-color: #ef4444;
+}
+
+/* 메인 컨테이너 */
+.main .stContainer {
+    max-width: 1400px;
+}
+
+/* 카드 스타일 */
+.card {
+    background: white;
+    border-radius: 16px;
+    padding: 24px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    margin-bottom: 20px;
+}
+
+/* 다크모드 카드 */
+[data-theme="dark"] .card {
+    background: #1e293b;
+}
+
+/* 상태 배지 */
+.badge {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.badge-success { background: #dcfce7; color: #166534; }
+.badge-warning { background: #fef3c7; color: #92400e; }
+.badge-danger { background: #fee2e2; color: #991b1b; }
+.badge-info { background: #dbeafe; color: #1e40af; }
+.badge-neutral { background: #f1f5f9; color: #475569; }
+
+/* 다크모드 배지 */
+[data-theme="dark"] .badge-success { background: #166534; color: #dcfce7; }
+[data-theme="dark"] .badge-warning { background: #92400e; color: #fef3c7; }
+[data-theme="dark"] .badge-danger { background: #991b1b; color: #fee2e2; }
+[data-theme="dark"] .badge-info { background: #1e40af; color: #dbeafe; }
+[data-theme="dark"] .badge-neutral { background: #334155; color: #cbd5e1; }
+
+/* 통계 카드 */
+.stat-card {
+    background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-dark) 100%);
+    border-radius: 16px;
+    padding: 24px;
+    color: white;
+}
+
+.stat-value {
+    font-size: 36px;
+    font-weight: 700;
+    margin: 8px 0;
+}
+
+.stat-label {
+    font-size: 14px;
+    opacity: 0.9;
+}
+
+/* 테이블 스타일 */
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.data-table th,
+.data-table td {
+    padding: 12px 16px;
+    text-align: left;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.data-table th {
+    background: #f8fafc;
+    font-weight: 600;
+    color: #64748b;
+    font-size: 13px;
+    text-transform: uppercase;
+}
+
+/* 버튼 스타일 */
+.btn-primary {
+    background: var(--primary-color);
+    color: white;
+    padding: 10px 20px;
+    border-radius: 8px;
+    border: none;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.btn-primary:hover {
+    background: var(--primary-dark);
+}
+
+/* 사이드바 스타일 */
+.css-1d391kg {
+    background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%) !important;
+}
+
+.css-1d391kg a {
+    color: #cbd5e1 !important;
+}
+
+.css-1d391kg a:hover {
+    color: white !important;
+}
+
+/* 진행률 바 */
+.progress-bar {
+    height: 8px;
+    background: #e2e8f0;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--primary-color), var(--primary-light));
+    transition: width 0.3s ease;
+}
+
+/* 칸반 보드 */
+.kanban-board {
+    display: flex;
+    gap: 20px;
+    overflow-x: auto;
+}
+
+.kanban-column {
+    min-width: 300px;
+    background: #f1f5f9;
+    border-radius: 12px;
+    padding: 16px;
+}
+
+[data-theme="dark"] .kanban-column {
+    background: #334155;
+}
+
+.kanban-column-title {
+    font-weight: 600;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.kanban-card {
+    background: white;
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 8px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+[data-theme="dark"] .kanban-card {
+    background: #1e293b;
+}
+
+.kanban-card:hover {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+/* 우선순위 표시 */
+.priority-high { border-left: 3px solid var(--danger-color); }
+.priority-medium { border-left: 3px solid var(--warning-color); }
+.priority-low { border-left: 3px solid var(--success-color); }
+
+/* 타임라인 */
+.timeline {
+    position: relative;
+    padding-left: 30px;
+}
+
+.timeline::before {
+    content: '';
+    position: absolute;
+    left: 8px;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: #e2e8f0;
+}
+
+.timeline-item {
+    position: relative;
+    padding-bottom: 24px;
+}
+
+.timeline-item::before {
+    content: '';
+    position: absolute;
+    left: -26px;
+    top: 4px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--primary-color);
+    border: 2px solid white;
+}

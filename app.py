@@ -1,0 +1,1553 @@
+"""
+올인원 에이전시 관리 시스템
+Streamlit 기반 관리자 대시보드
+"""
+
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+from datetime import datetime, timedelta
+import json
+import os
+
+# 데이터베이스 모델 임포트
+from database import (
+    ClientDB, InquiryDB, QuotationDB, ProjectDB, TaskDB, SettingsDB
+)
+
+# 유틸리티 임포트
+from utils import (
+    AIQuotationGenerator, PDFQuotationGenerator, EmailSender,
+    ContractGenerator, SignatureVerifier
+)
+import time
+import secrets
+
+# 페이지 설정
+st.set_page_config(
+    page_title="에이전시 관리 시스템",
+    page_icon="🚀",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# CSS 로드
+def load_css():
+    css_path = os.path.join(os.path.dirname(__file__), "static", "css", "style.css")
+    with open(css_path, "r", encoding="utf-8") as f:
+        st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+
+load_css()
+
+# 세션 상태 초기화
+if "db" not in st.session_state:
+    st.session_state.db = {
+        "client": ClientDB(),
+        "inquiry": InquiryDB(),
+        "quotation": QuotationDB(),
+        "project": ProjectDB(),
+        "task": TaskDB(),
+        "settings": SettingsDB()
+    }
+
+if "current_page" not in st.session_state:
+    st.session_state.current_page = "dashboard"
+
+if "dark_mode" not in st.session_state:
+    st.session_state.dark_mode = False
+
+
+# ===== 유틸리티 함수 =====
+
+def format_currency(amount):
+    """금액 포맷팅"""
+    if amount >= 10000:
+        return f"{amount/10000:.1f}만원"
+    return f"{amount:,}원"
+
+
+def format_date(date_str):
+    """날짜 포맷팅"""
+    if date_str:
+        try:
+            dt = datetime.fromisoformat(str(date_str).replace("T", " "))
+            return dt.strftime("%Y.%m.%d")
+        except:
+            return str(date_str)
+    return "-"
+
+
+def get_status_badge(status):
+    """상태 배지 HTML"""
+    badges = {
+        "new": '<span class="badge badge-info">신규</span>',
+        "contacted": '<span class="badge badge-warning">연락중</span>',
+        "quoted": '<span class="badge badge-neutral">견적발송</span>',
+        "converted": '<span class="badge badge-success">계약완료</span>',
+        "lost": '<span class="badge badge-danger">계약실패</span>',
+        "draft": '<span class="badge badge-neutral">초안</span>',
+        "sent": '<span class="badge badge-info">발송</span>',
+        "approved": '<span class="badge badge-success">승인</span>',
+        "rejected": '<span class="badge badge-danger">거절</span>',
+        "pending": '<span class="badge badge-warning">대기</span>',
+        "signed": '<span class="badge badge-success">서명완료</span>',
+        "todo": '<span class="badge badge-neutral">할일</span>',
+        "in_progress": '<span class="badge badge-info">진행중</span>',
+        "done": '<span class="badge badge-success">완료</span>',
+        "planning": '<span class="badge badge-info">기획</span>',
+        "active": '<span class="badge badge-warning">진행중</span>',
+        "completed": '<span class="badge badge-success">완료</span>',
+        "on_hold": '<span class="badge badge-danger">보류</span>',
+    }
+    return badges.get(status, f'<span class="badge badge-neutral">{status}</span>')
+
+
+def show_metric_card(title, value, subtitle="", color="blue"):
+    """메트릭 카드 표시"""
+    colors = {
+        "blue": "linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)",
+        "green": "linear-gradient(135deg, #10b981 0%, #059669 100%)",
+        "purple": "linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%)",
+        "orange": "linear-gradient(135deg, #f59e0b 0%, #d97706 100%)",
+        "red": "linear-gradient(135deg, #ef4444 0%, #dc2626 100%)",
+    }
+
+    st.markdown(f"""
+        <div style="background: {colors[color]}; border-radius: 16px; padding: 20px; color: white;">
+            <div style="font-size: 14px; opacity: 0.9;">{title}</div>
+            <div style="font-size: 32px; font-weight: 700; margin: 8px 0;">{value}</div>
+            <div style="font-size: 12px; opacity: 0.8;">{subtitle}</div>
+        </div>
+    """, unsafe_allow_html=True)
+
+
+# ===== 사이드바 =====
+
+def render_sidebar():
+    """사이드바 렌더링"""
+    with st.sidebar:
+        st.markdown("""
+            <div style="text-align: center; padding: 20px 0;">
+                <h1 style="font-size: 24px; margin: 0;">🚀 에이전시 관리</h1>
+            </div>
+        """, unsafe_allow_html=True)
+
+        st.markdown("---")
+
+        # 다크 모드 토글
+        dark_mode = st.checkbox("🌙 다크 모드", value=st.session_state.dark_mode)
+        st.session_state.dark_mode = dark_mode
+
+        if dark_mode:
+            st.markdown("""
+                <style>
+                    .stApp { background-color: #0f172a; }
+                    .main { background-color: #0f172a; }
+                    blockquote { background-color: #1e293b; color: #e2e8f0; }
+                </style>
+            """, unsafe_allow_html=True)
+
+        # 네비게이션 메뉴
+        st.markdown("### 📁 메뉴")
+
+        menu_items = {
+            "dashboard": "📊 대시보드",
+            "clients": "👥 고객 관리",
+            "inquiries": "📝 문의 관리",
+            "quotations": "💰 견적 관리",
+            "contracts": "📄 계약 관리",
+            "projects": "🚧 프로젝트 관리",
+            "payments": "💳 정산 관리",
+            "settings": "⚙️ 설정",
+        }
+
+        for key, label in menu_items.items():
+            if st.button(label, key=f"nav_{key}", use_container_width=True,
+                        icon=None, disabled=st.session_state.current_page == key):
+                st.session_state.current_page = key
+                st.rerun()
+
+        st.markdown("---")
+
+        # 공개 설문 링크
+        st.markdown("### 🔗 공유 링크")
+        st.code("http://localhost:8501/survey", language="text")
+
+        st.markdown("---")
+        st.markdown(f"""
+            <div style="text-align: center; font-size: 12px; opacity: 0.6;">
+                버전 1.0.0
+            </div>
+        """, unsafe_allow_html=True)
+
+
+# ===== 대시보드 페이지 =====
+
+def render_dashboard():
+    """대시보드 페이지"""
+    st.markdown("## 📊 대시보드")
+
+    # 데이터 로드
+    clients = st.session_state.db["client"].get_all_clients()
+    inquiries = st.session_state.db["inquiry"].get_all_inquiries()
+    quotations = st.session_state.db["quotation"].get_all_quotations()
+    projects = st.session_state.db["project"].get_all_projects()
+
+    # 메트릭 계산
+    new_clients = sum(1 for c in clients if c["status"] == "lead")
+    active_projects = sum(1 for p in projects if p["status"] in ["planning", "active"])
+    pending_quotations = sum(1 for q in quotations if q["status"] == "sent")
+
+    # 총 매출 계산 (계약된 프로젝트)
+    total_revenue = sum(p["total_contract_amount"] or 0 for p in projects if p["status"] != "lost")
+
+    # 메트릭 카드
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        show_metric_card("신규 고객", new_clients, f"총 {len(clients)}명", "blue")
+    with col2:
+        show_metric_card("진행 프로젝트", active_projects, f"총 {len(projects)}개", "green")
+    with col3:
+        show_metric_card("견적 대기", pending_quotations, f"총 {len(quotations)}건", "orange")
+    with col4:
+        show_metric_card("총 매출", format_currency(int(total_revenue)), "누적 기준", "purple")
+
+    st.markdown("")
+
+    # 차트 영역
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("### 📈 월별 매출 추이")
+        # 월별 매출 데이터 생성
+        monthly_data = {}
+        for project in projects:
+            if project["created_at"]:
+                month = project["created_at"][:7]  # YYYY-MM
+                amount = project["total_contract_amount"] or 0
+                monthly_data[month] = monthly_data.get(month, 0) + amount
+
+        if monthly_data:
+            df_monthly = pd.DataFrame([
+                {"월": k, "매출": v}
+                for k, v in sorted(monthly_data.items())
+            ])
+            fig = px.bar(df_monthly, x="월", y="매출",
+                        color_discrete_sequence=["#3b82f6"])
+            fig.update_layout(
+                plot_bgcolor="rgba(0,0,0,0)",
+                paper_bgcolor="rgba(0,0,0,0)",
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("데이터가 없습니다.")
+
+    with col2:
+        st.markdown("### 📊 프로젝트 상태 분포")
+        project_statuses = {}
+        for p in projects:
+            status = p["status"]
+            project_statuses[status] = project_statuses.get(status, 0) + 1
+
+        if project_statuses:
+            status_labels = {
+                "planning": "기획중",
+                "active": "진행중",
+                "completed": "완료",
+                "on_hold": "보류",
+                "lost": "계약실패"
+            }
+            df_status = pd.DataFrame([
+                {"상태": status_labels.get(k, k), "수": v}
+                for k, v in project_statuses.items()
+            ])
+            colors = ["#3b82f6", "#f59e0b", "#10b981", "#ef4444", "#64748b"]
+            fig = px.pie(df_status, values="수", names="상태",
+                        color_discrete_sequence=colors)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("데이터가 없습니다.")
+
+    st.markdown("")
+
+    # 최근 활동
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("### 📝 최근 문의")
+        if inquiries:
+            df_inquiries = pd.DataFrame(inquiries[:5])
+            df_inquiries_display = df_inquiries[["client_name", "project_type", "created_at"]] if "client_name" in df_inquiries.columns else df_inquiries
+            st.dataframe(df_inquiries_display, use_container_width=True, hide_index=True)
+        else:
+            st.info("등록된 문의가 없습니다.")
+
+    with col2:
+        st.markdown("### 🚧 진행 중인 프로젝트")
+        active = [p for p in projects if p["status"] in ["planning", "active"]]
+        if active:
+            df_active = pd.DataFrame(active[:5])
+            df_display = df_active[["name", "progress", "status"]] if "name" in df_active.columns else df_active
+            st.dataframe(df_display, use_container_width=True, hide_index=True)
+        else:
+            st.info("진행 중인 프로젝트가 없습니다.")
+
+
+# ===== 고객 관리 페이지 =====
+
+def render_clients():
+    """고객 관리 페이지"""
+    st.markdown("## 👥 고객 관리")
+
+    # 고객 추가/편집 모드
+    with st.expander("➕ 새 고객 추가", expanded=False):
+        with st.form("add_client_form"):
+            col1, col2 = st.columns(2)
+            with col1:
+                name = st.text_input("이름 *", key="client_name")
+                email = st.text_input("이메일 *", key="client_email")
+            with col2:
+                phone = st.text_input("연락처", key="client_phone")
+                company = st.text_input("회사명", key="client_company")
+
+            notes = st.text_area("메모", key="client_notes")
+            source = st.selectbox("유입 경로", ["direct", "survey", "referral", "sns"],
+                               format_func=lambda x: {"direct": "직접", "survey": "설문", "referral": "소개", "sns": "SNS"}[x])
+
+            col1, col2 = st.columns(2)
+            with col1:
+                submit = st.form_submit_button("고객 추가", use_container_width=True)
+            with col2:
+                st.write("")
+
+            if submit and name and email:
+                client_id = st.session_state.db["client"].add_client(
+                    name=name, email=email, phone=phone, company=company,
+                    source=source, notes=notes
+                )
+                st.success(f"고객이 추가되었습니다. (ID: {client_id})")
+                st.rerun()
+
+    # 고객 목록
+    st.markdown("### 고객 목록")
+
+    clients = st.session_state.db["client"].get_all_clients()
+
+    if clients:
+        # 검색/필터
+        col1, col2, col3 = st.columns([2, 1, 1])
+        with col1:
+            search = st.text_input("🔍 검색", placeholder="이름, 이메일, 회사명...")
+        with col2:
+            status_filter = st.selectbox("상태 필터", ["all", "lead", "contacted", "quoted", "converted", "lost"],
+                                       format_func=lambda x: {"all": "전체", "lead": "리드", "contacted": "연락중",
+                                                             "quoted": "견적발송", "converted": "계약완료", "lost": "계약실패"}[x])
+        with col3:
+            st.write("")
+
+        # 필터링
+        filtered_clients = clients
+        if search:
+            filtered_clients = [c for c in filtered_clients
+                              if search.lower() in c["name"].lower()
+                              or search.lower() in c.get("email", "").lower()
+                              or search.lower() in c.get("company", "").lower()]
+        if status_filter != "all":
+            filtered_clients = [c for c in filtered_clients if c["status"] == status_filter]
+
+        # 테이블 표시
+        df_clients = pd.DataFrame(filtered_clients)
+        display_df = df_clients[["id", "name", "email", "phone", "company", "status", "created_at"]]
+
+        # 상태 배지 적용
+        for idx, row in display_df.iterrows():
+            display_df.at[idx, "status"] = get_status_badge(row["status"])
+
+        st.dataframe(display_df, use_container_width=True, hide_index=True)
+
+        # 선택된 고객 상세 보기
+        st.markdown("### 고객 상세")
+        client_ids = [c["id"] for c in filtered_clients]
+        if client_ids:
+            selected_id = st.selectbox("고객 선택", [""] + client_ids,
+                                     format_func=lambda x: "선택하세요" if x == "" else f"{x}번 고객")
+
+            if selected_id:
+                client = st.session_state.db["client"].get_client(selected_id)
+                if client:
+                    col1, col2 = st.columns([2, 1])
+
+                    with col1:
+                        st.markdown("#### 기본 정보")
+                        c1, c2 = st.columns(2)
+                        with c1:
+                            st.markdown(f"**이름:** {client['name']}")
+                            st.markdown(f"**이메일:** {client['email']}")
+                        with c2:
+                            st.markdown(f"**연락처:** {client.get('phone', '-')}")
+                            st.markdown(f"**회사:** {client.get('company', '-')}")
+
+                        st.markdown(f"**메모:** {client.get('notes', '-')}")
+
+                    with col2:
+                        st.markdown("#### 상태 변경")
+                        new_status = st.selectbox("고객 상태",
+                                                ["lead", "contacted", "quoted", "converted", "lost"],
+                                                index=["lead", "contacted", "quoted", "converted", "lost"].index(client["status"]),
+                                                format_func=lambda x: {"lead": "리드", "contacted": "연락중",
+                                                                     "quoted": "견적발송", "converted": "계약완료", "lost": "계약실패"}[x])
+
+                        if st.button("상태 업데이트", use_container_width=True):
+                            st.session_state.db["client"].update_client(selected_id, status=new_status)
+                            st.success("상태가 업데이트되었습니다.")
+                            st.rerun()
+
+                        if st.button("고객 삭제", use_container_width=True, type="primary"):
+                            st.session_state.db["client"].delete_client(selected_id)
+                            st.success("고객이 삭제되었습니다.")
+                            st.rerun()
+
+    else:
+        st.info("등록된 고객이 없습니다. 새 고객을 추가해주세요.")
+
+
+# ===== 문의 관리 페이지 =====
+
+def render_inquiries():
+    """문의 관리 페이지"""
+    st.markdown("## 📝 문의 관리")
+
+    inquiries = st.session_state.db["inquiry"].get_all_inquiries()
+
+    if inquiries:
+        df_inquiries = pd.DataFrame(inquiries)
+
+        # 표시할 컬럼 선택
+        display_cols = ["id", "client_name", "project_type", "budget", "status", "created_at"]
+        available_cols = [c for c in display_cols if c in df_inquiries.columns]
+
+        display_df = df_inquiries[available_cols].copy()
+
+        # 프로젝트 유형 한글화
+        type_map = {
+            "website": "웹사이트", "landing": "랜딩페이지", "web_app": "웹앱",
+            "mobile_app": "모바일앱", "maintenance": "유지보수", "consulting": "컨설팅", "other": "기타"
+        }
+        if "project_type" in display_df.columns:
+            display_df["project_type"] = display_df["project_type"].map(type_map).fillna(display_df["project_type"])
+
+        st.dataframe(display_df, use_container_width=True, hide_index=True)
+
+        # 상세 보기
+        st.markdown("### 문의 상세")
+        inquiry_ids = [str(i["id"]) for i in inquiries]
+        selected_id = st.selectbox("문의 선택", [""] + inquiry_ids, format_func=lambda x: "선택하세요" if x == "" else f"{x}번 문의")
+
+        if selected_id:
+            inquiry = st.session_state.db["inquiry"].get_inquiry(int(selected_id))
+            if inquiry:
+                col1, col2 = st.columns([2, 1])
+
+                with col1:
+                    st.markdown(f"#### 고객 정보")
+                    st.markdown(f"- **이름:** {inquiry.get('client_name', '-')}")
+                    st.markdown(f"- **이메일:** {inquiry.get('client_email', '-')}")
+
+                    st.markdown(f"#### 문의 내용")
+                    st.markdown(f"- **프로젝트 유형:** {inquiry.get('project_type', '-')}")
+                    st.markdown(f"- **예산:** {inquiry.get('budget', '-')}")
+                    st.markdown(f"- **희망 기간:** {inquiry.get('duration', '-')}")
+                    st.markdown(f"- **내용:** {inquiry.get('description', '-')}")
+
+                with col2:
+                    st.markdown("#### 빠른 작업")
+                    if st.button("📄 견적서 생성", use_container_width=True):
+                        # 견적서 페이지로 이동 및 문의 ID 전달
+                        st.session_state.selected_inquiry = inquiry
+                        st.session_state.current_page = "quotations"
+                        st.rerun()
+
+                    if st.button("👤 고객 정보 보기", use_container_width=True):
+                        st.session_state.current_page = "clients"
+                        st.rerun()
+    else:
+        st.info("등록된 문의가 없습니다.")
+
+
+# ===== 견적 관리 페이지 =====
+
+def render_quotations():
+    """견적 관리 페이지"""
+    st.markdown("## 💰 견적 관리")
+
+    # AI 자동 생성 탭
+    tab1, tab2, tab3 = st.tabs(["🤖 AI 자동 생성", "➕ 수동 생성", "📋 견적서 목록"])
+
+    # ===== AI 자동 생성 =====
+    with tab1:
+        st.markdown("### 🤖 AI 견적서 자동 생성")
+        st.info("고객 문의 내용과 설정된 단가 지침을 바탕으로 AI가 자동으로 견적서를 생성합니다.")
+
+        # API 키 확인
+        api_key = st.session_state.db["settings"].get_setting("openai_api_key")
+
+        if not api_key:
+            st.warning("⚠️ OpenAI API 키가 설정되지 않았습니다. 설정 페이지에서 API 키를 입력하세요.")
+        else:
+            # 문의 선택
+            inquiries = st.session_state.db["inquiry"].get_all_inquiries()
+
+            if inquiries:
+                inquiry_options = {
+                    f"{i['id']} - {i.get('client_name', '-')} ({i.get('project_type', '-')})": i
+                    for i in inquiries
+                }
+
+                selected_inquiry_option = st.selectbox("문의 선택", list(inquiry_options.keys()))
+
+                if selected_inquiry_option:
+                    inquiry = inquiry_options[selected_inquiry_option]
+
+                    # 문의 내용 표시
+                    with st.expander("📄 문의 내용 보기", expanded=False):
+                        st.markdown(f"**고객:** {inquiry.get('client_name', '-')}")
+                        st.markdown(f"**프로젝트 유형:** {inquiry.get('project_type', '-')}")
+                        st.markdown(f"**예산:** {inquiry.get('budget', '-')}")
+                        st.markdown(f"**상세 내용:**")
+                        st.text(inquiry.get('description', '-'))
+
+                    col1, col2 = st.columns([1, 1])
+
+                    with col1:
+                        use_ai = st.checkbox("🤖 AI 사용", value=True)
+
+                    with col2:
+                        company_info = {
+                            'name': st.session_state.db["settings"].get_setting("company_name"),
+                            'phone': st.session_state.db["settings"].get_setting("company_phone"),
+                            'address': st.session_state.db["settings"].get_setting("company_address"),
+                        }
+                        if not company_info['name']:
+                            st.warning("회사 정보를 설정하세요")
+
+                    if st.button("🚀 견적서 생성", use_container_width=True, type="primary"):
+                        with st.spinner("AI가 견적서를 생성 중입니다..."):
+                            pricing_guideline = st.session_state.db["settings"].get_setting("pricing_guideline")
+
+                            if use_ai:
+                                # AI로 견적서 생성
+                                generator = AIQuotationGenerator(api_key=api_key)
+                                result = generator.generate_quotation(
+                                    inquiry=inquiry,
+                                    pricing_guideline=pricing_guideline,
+                                    company_info=company_info
+                                )
+
+                                # AI 사용 로그 저장
+                                from utils import log_ai_usage
+                                log_ai_usage(
+                                    db=st.session_state.db["settings"],
+                                    request_type="quotation_generation",
+                                    prompt=f"Inquiry: {inquiry.get('description', '')}",
+                                    response=result,
+                                    tokens_used=result.get('tokens_used', 0),
+                                    cost=result.get('estimated_cost', 0),
+                                    model="gpt-4o-mini"
+                                )
+
+                                items = result.get('items', [])
+                                total_amount = result.get('total_amount', 0)
+                                notes = result.get('notes', '')
+
+                                st.success(f"✅ AI가 견적서를 생성했습니다!")
+                                st.info(f"💰 예상 비용: ${result.get('estimated_cost', 0):.4f} USD ({result.get('tokens_used', 0)} 토큰)")
+                            else:
+                                # Fallback
+                                items = [
+                                    {"name": "프로젝트 개발", "quantity": 1, "unit": "건", "unit_price": 3000000}
+                                ]
+                                total_amount = 3000000
+                                notes = "기본 견적서"
+
+                            # 견적서 저장
+                            client_id = inquiry.get('client_id')
+                            quotation_id = st.session_state.db["quotation"].add_quotation(
+                                client_id=client_id,
+                                items=items,
+                                total_amount=total_amount,
+                                inquiry_id=inquiry['id'],
+                                notes=notes
+                            )
+
+                            st.success(f"🎉 견적서가 저장되었습니다! (ID: {quotation_id})")
+                            st.rerun()
+            else:
+                st.info("등록된 문의가 없습니다.")
+
+    # ===== 수동 생성 =====
+    with tab2:
+        with st.expander("➕ 새 견적서 생성", expanded=False):
+            with st.form("new_quotation"):
+                clients = st.session_state.db["client"].get_all_clients()
+                if clients:
+                    client_options = {f"{c['id']} - {c['name']} ({c.get('company', '')})": c['id'] for c in clients}
+                    selected_client = st.selectbox("고객 선택 *", list(client_options.keys()))
+
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        item_name = st.text_input("품목명")
+                        item_qty = st.number_input("수량", min_value=1, value=1)
+                    with col2:
+                        item_price = st.number_input("단가 (원)", min_value=0, value=0)
+
+                    add_item = st.form_submit_button("품목 추가")
+
+                    # 품목 리스트 세션 상태
+                    if "quotation_items" not in st.session_state:
+                        st.session_state.quotation_items = []
+
+                    if add_item and item_name:
+                        st.session_state.quotation_items.append({
+                            "name": item_name,
+                            "quantity": item_qty,
+                            "price": item_price,
+                            "amount": item_qty * item_price
+                        })
+
+                    # 품목 목록 표시
+                    if st.session_state.quotation_items:
+                        st.markdown("**품목 목록:**")
+                        for i, item in enumerate(st.session_state.quotation_items):
+                            st.markdown(f"- {item['name']} x {item['quantity']} = {format_currency(item['amount'])}")
+
+                        total = sum(item['amount'] for item in st.session_state.quotation_items)
+                        st.markdown(f"**합계: {format_currency(total)}**")
+
+                        if st.form_submit_button("견적서 저장", use_container_width=True):
+                            client_id = client_options[selected_client]
+                            quotation_id = st.session_state.db["quotation"].add_quotation(
+                                client_id=client_id,
+                                items=st.session_state.quotation_items,
+                                total_amount=total
+                            )
+                            st.session_state.quotation_items = []
+                            st.success(f"견적서가 생성되었습니다. (ID: {quotation_id})")
+                            st.rerun()
+                else:
+                    st.warning("먼저 고객을 등록해주세요.")
+
+    # ===== 견적서 목록 =====
+    with tab3:
+        quotations = st.session_state.db["quotation"].get_all_quotations()
+
+        if quotations:
+            df_quotations = pd.DataFrame(quotations)
+
+            # 표시용 데이터프레임
+            display_data = []
+            for q in quotations:
+                display_data.append({
+                    "ID": q["id"],
+                    "견적번호": q["quotation_number"],
+                    "고객": q.get("client_name", "-"),
+                    "금액": format_currency(int(q["total_amount"])),
+                    "상태": get_status_badge(q["status"]),
+                    "생성일": format_date(q["created_at"])
+                })
+
+            st.dataframe(pd.DataFrame(display_data), use_container_width=True, hide_index=True)
+
+            # 상세 보기
+            st.markdown("### 견적서 상세")
+            quotation_ids = [str(q["id"]) for q in quotations]
+            selected_id = st.selectbox("견적서 선택", [""] + quotation_ids,
+                                     format_func=lambda x: "선택하세요" if x == "" else f"{x}번 견적서")
+
+            if selected_id:
+                quotation = st.session_state.db["quotation"].get_quotation(int(selected_id))
+                if quotation:
+                    col1, col2 = st.columns([2, 1])
+
+                    with col1:
+                        st.markdown(f"#### {quotation['quotation_number']}")
+                        st.markdown(f"**고객:** {quotation.get('client_name', '-')}")
+                        st.markdown(f"**이메일:** {quotation.get('client_email', '-')}")
+
+                        st.markdown("**품목 목록:**")
+                        items = quotation.get('items', [])
+                        if items:
+                            # 품목 테이블 표시
+                            item_data = []
+                            for item in items:
+                                item_data.append({
+                                    "품목": item.get('name', '-'),
+                                    "수량": item.get('quantity', 1),
+                                    "단가": format_currency(item.get('unit_price', item.get('price', 0))),
+                                    "금액": format_currency(item.get('amount', item.get('unit_price', 0) * item.get('quantity', 1)))
+                                })
+                            st.dataframe(pd.DataFrame(item_data), use_container_width=True, hide_index=True)
+
+                        total = int(quotation['total_amount'])
+                        vat = int(total * 0.1)
+                        grand_total = total + vat
+
+                        st.markdown(f"**공급가액:** {format_currency(total)}")
+                        st.markdown(f"**부가세(10%):** {format_currency(vat)}")
+                        st.markdown(f"**합계:** {format_currency(grand_total)}")
+
+                    with col2:
+                        st.markdown("#### 작업")
+
+                        # 상태 변경
+                        statuses = ["draft", "sent", "approved", "rejected"]
+                        status_labels = {"draft": "초안", "sent": "발송", "approved": "승인", "rejected": "거절"}
+                        current_status = quotation["status"]
+
+                        new_status = st.selectbox("견적 상태", statuses,
+                                                index=statuses.index(current_status) if current_status in statuses else 0,
+                                                format_func=lambda x: status_labels[x])
+
+                        if st.button("🔄 상태 변경", use_container_width=True):
+                            st.session_state.db["quotation"].update_quotation_status(int(selected_id), new_status)
+                            st.success("상태가 변경되었습니다.")
+                            st.rerun()
+
+                        st.markdown("---")
+
+                        # PDF 다운로드
+                        if st.button("📄 PDF 다운로드", use_container_width=True):
+                            with st.spinner("PDF를 생성 중입니다..."):
+                                try:
+                                    pdf_gen = PDFQuotationGenerator()
+
+                                    # 고객 정보 가져오기
+                                    client = st.session_state.db["client"].get_client(quotation['client_id'])
+
+                                    # 회사 정보
+                                    company_info = {
+                                        'name': st.session_state.db["settings"].get_setting("company_name"),
+                                        'phone': st.session_state.db["settings"].get_setting("company_phone"),
+                                        'address': st.session_state.db["settings"].get_setting("company_address"),
+                                    }
+
+                                    # PDF 생성
+                                    pdf_data = pdf_gen.generate_quotation_pdf(
+                                        quotation=quotation,
+                                        client=client,
+                                        company_info=company_info if company_info['name'] else None
+                                    )
+
+                                    # 다운로드 버튼
+                                    st.download_button(
+                                        label="⬇️ PDF 파일 다운로드",
+                                        data=pdf_data,
+                                        file_name=f"견적서_{quotation['quotation_number']}.pdf",
+                                        mime="application/pdf",
+                                        use_container_width=True
+                                    )
+                                except Exception as e:
+                                    st.error(f"PDF 생성 오류: {str(e)}")
+
+                        # 이메일 발송
+                        if st.button("📧 이메일 발송", use_container_width=True):
+                            # SMTP 설정 확인
+                            smtp_settings = st.session_state.db["settings"].get_all_settings()
+                            sender = EmailSender.create_from_settings(smtp_settings)
+
+                            if not sender:
+                                st.error("SMTP 설정이 되어 있지 않습니다. 설정 페이지에서 이메일을 구성하세요.")
+                            else:
+                                with st.spinner("이메일을 발송 중입니다..."):
+                                    try:
+                                        # PDF 생성
+                                        pdf_gen = PDFQuotationGenerator()
+                                        client = st.session_state.db["client"].get_client(quotation['client_id'])
+                                        company_info = {
+                                            'name': smtp_settings.get('company_name', '에이전시'),
+                                            'phone': smtp_settings.get('company_phone'),
+                                            'address': smtp_settings.get('company_address'),
+                                        }
+
+                                        pdf_data = pdf_gen.generate_quotation_pdf(
+                                            quotation=quotation,
+                                            client=client,
+                                            company_info=company_info if company_info['name'] else None
+                                        )
+
+                                        # 이메일 발송
+                                        result = sender.send_quotation(
+                                            to_email=quotation.get('client_email', ''),
+                                            client_name=quotation.get('client_name', ''),
+                                            quotation_number=quotation['quotation_number'],
+                                            quotation_url=f"http://localhost:8501/quotation/{quotation['id']}",
+                                            pdf_data=pdf_data,
+                                            company_name=company_info['name']
+                                        )
+
+                                        if result['success']:
+                                            st.success("✅ " + result['message'])
+                                            # 상태를 'sent'로 변경
+                                            st.session_state.db["quotation"].update_quotation_status(int(selected_id), "sent")
+                                        else:
+                                            st.error("❌ " + result['message'])
+
+                                    except Exception as e:
+                                        st.error(f"이메일 발송 오류: {str(e)}")
+        else:
+            st.info("등록된 견적서가 없습니다.")
+
+
+# ===== 프로젝트 관리 페이지 =====
+
+def render_projects():
+    """프로젝트 관리 페이지"""
+    st.markdown("## 🚧 프로젝트 관리")
+
+    # 새 프로젝트 생성
+    with st.expander("➕ 새 프로젝트 생성", expanded=False):
+        with st.form("new_project"):
+            clients = st.session_state.db["client"].get_all_clients()
+            if clients:
+                client_options = {f"{c['id']} - {c['name']}": c['id'] for c in clients}
+                selected_client = st.selectbox("고객 선택 *", list(client_options.keys()))
+
+                project_name = st.text_input("프로젝트명 *")
+                project_desc = st.text_area("프로젝트 설명")
+
+                col1, col2 = st.columns(2)
+                with col1:
+                    start_date = st.date_input("시작 예정일")
+                with col2:
+                    end_date = st.date_input("종료 예정일")
+
+                contract_amount = st.number_input("계약 금액 (원)", min_value=0, value=0)
+
+                if st.form_submit_button("프로젝트 생성", use_container_width=True):
+                    client_id = client_options[selected_client]
+                    project_id = st.session_state.db["project"].add_project(
+                        client_id=client_id,
+                        name=project_name,
+                        description=project_desc,
+                        total_contract_amount=contract_amount
+                    )
+                    st.success(f"프로젝트가 생성되었습니다. (ID: {project_id})")
+                    st.rerun()
+            else:
+                st.warning("먼저 고객을 등록해주세요.")
+
+    # 프로젝트 목록
+    projects = st.session_state.db["project"].get_all_projects()
+
+    if projects:
+        # 탭으로 뷰 전환
+        tab1, tab2 = st.tabs(["📋 리스트 보기", "📊 칸반 보드"])
+
+        with tab1:
+            for project in projects:
+                with st.container():
+                    col1, col2, col3 = st.columns([3, 1, 1])
+
+                    with col1:
+                        st.markdown(f"### {project['name']}")
+                        st.markdown(f"고객: {project.get('client_name', '-')}")
+
+                        # 진행률 바
+                        progress = project.get('progress', 0)
+                        st.markdown(f"""
+                            <div class="progress-bar">
+                                <div class="progress-fill" style="width: {progress}%"></div>
+                            </div>
+                            <small>진행률: {progress}%</small>
+                        """, unsafe_allow_html=True)
+
+                    with col2:
+                        st.markdown(f"{get_status_badge(project['status'])}")
+                        st.markdown(f"{format_currency(project.get('total_contract_amount', 0))}")
+
+                    with col3:
+                        if st.button("상세", key=f"detail_{project['id']}", use_container_width=True):
+                            st.session_state.selected_project = project['id']
+                            st.rerun()
+
+                st.markdown("---")
+
+        with tab2:
+            # 칸반 보드
+            col1, col2, col3, col4 = st.columns(4)
+
+            with col1:
+                st.markdown("#### 📋 기획")
+                planning_projects = [p for p in projects if p['status'] == 'planning']
+                for p in planning_projects:
+                    st.markdown(f"""
+                        <div class="kanban-card" style="padding: 12px; border-radius: 8px; margin-bottom: 8px;">
+                            <strong>{p['name']}</strong><br>
+                            <small>{p.get('client_name', '-')}</small>
+                        </div>
+                    """, unsafe_allow_html=True)
+
+            with col2:
+                st.markdown("#### 🚧 진행중")
+                active_projects = [p for p in projects if p['status'] == 'active']
+                for p in active_projects:
+                    st.markdown(f"""
+                        <div class="kanban-card" style="padding: 12px; border-radius: 8px; margin-bottom: 8px;">
+                            <strong>{p['name']}</strong><br>
+                            <small>{p.get('client_name', '-')}</small><br>
+                            <small>진행률: {p.get('progress', 0)}%</small>
+                        </div>
+                    """, unsafe_allow_html=True)
+
+            with col3:
+                st.markdown("#### ✅ 완료")
+                completed_projects = [p for p in projects if p['status'] == 'completed']
+                for p in completed_projects:
+                    st.markdown(f"""
+                        <div class="kanban-card" style="padding: 12px; border-radius: 8px; margin-bottom: 8px;">
+                            <strong>{p['name']}</strong><br>
+                            <small>{p.get('client_name', '-')}</small>
+                        </div>
+                    """, unsafe_allow_html=True)
+
+            with col4:
+                st.markdown("#### ⏸️ 보류")
+                hold_projects = [p for p in projects if p['status'] == 'on_hold']
+                for p in hold_projects:
+                    st.markdown(f"""
+                        <div class="kanban-card" style="padding: 12px; border-radius: 8px; margin-bottom: 8px;">
+                            <strong>{p['name']}</strong><br>
+                            <small>{p.get('client_name', '-')}</small>
+                        </div>
+                    """, unsafe_allow_html=True)
+
+        # 프로젝트 상세 보기
+        if "selected_project" in st.session_state:
+            project_id = st.session_state.selected_project
+            project = st.session_state.db["project"].get_project(project_id)
+
+            if project:
+                st.markdown("### 프로젝트 상세")
+
+                col1, col2 = st.columns([2, 1])
+
+                with col1:
+                    st.markdown(f"#### {project['name']}")
+                    st.markdown(f"- **고객:** {project.get('client_name', '-')}")
+                    st.markdown(f"- **설명:** {project.get('description', '-')}")
+
+                    # 진행률 업데이트
+                    new_progress = st.slider("진행률", 0, 100, project.get('progress', 0))
+                    if st.button("진행률 업데이트"):
+                        st.session_state.db["project"].update_project_progress(project_id, new_progress)
+                        st.success("진행률이 업데이트되었습니다.")
+                        st.rerun()
+
+                with col2:
+                    st.markdown("#### 태스크 관리")
+
+                    # 태스크 추가
+                    with st.form("add_task"):
+                        task_title = st.text_input("태스크명")
+                        task_priority = st.selectbox("우선순위", ["low", "medium", "high"],
+                                                   format_func=lambda x: {"low": "낮음", "medium": "보통", "high": "높음"}[x])
+
+                        if st.form_submit_button("태스크 추가"):
+                            if task_title:
+                                st.session_state.db["task"].add_task(
+                                    project_id=project_id,
+                                    title=task_title,
+                                    priority=task_priority
+                                )
+                                st.success("태스크가 추가되었습니다.")
+                                st.rerun()
+
+                    # 태스크 목록
+                    tasks = st.session_state.db["task"].get_project_tasks(project_id)
+                    if tasks:
+                        st.markdown("**태스크 목록:**")
+                        for task in tasks:
+                            status_emoji = {"todo": "⬜", "in_progress": "🟡", "done": "✅"}
+                            st.markdown(f"{status_emoji.get(task['status'], '⬜')} {task['title']}")
+                    else:
+                        st.info("등록된 태스크가 없습니다.")
+
+                if st.button("닫기"):
+                    del st.session_state.selected_project
+                    st.rerun()
+    else:
+        st.info("등록된 프로젝트가 없습니다.")
+
+
+# ===== 설정 페이지 =====
+
+def render_settings():
+    """설정 페이지"""
+    st.markdown("## ⚙️ 설정")
+
+    st.markdown("### 💰 단가 지침 (Pricing Guideline)")
+    st.info("AI가 견적서를 생성할 때 참조하는 단가표입니다.")
+
+    current_pricing = st.session_state.db["settings"].get_setting("pricing_guideline")
+
+    pricing_guideline = st.text_area(
+        "단가 지침",
+        value=current_pricing,
+        height=200,
+        help="각 서비스의 기준 가격을 한 줄에 하나씩 입력하세요."
+    )
+
+    if st.button("단가 지침 저장", use_container_width=True):
+        st.session_state.db["settings"].set_setting("pricing_guideline", pricing_guideline)
+        st.success("단가 지침이 저장되었습니다.")
+
+    st.markdown("---")
+
+    st.markdown("### 📧 이메일 설정 (SMTP)")
+    st.warning("Gmail을 사용하는 경우 앱 비밀번호를 생성해야 합니다.")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        smtp_host = st.text_input("SMTP 호스트",
+                                  value=st.session_state.db["settings"].get_setting("smtp_host"))
+        smtp_port = st.text_input("SMTP 포트",
+                                  value=st.session_state.db["settings"].get_setting("smtp_port", "587"))
+
+    with col2:
+        smtp_email = st.text_input("발신 이메일",
+                                   value=st.session_state.db["settings"].get_setting("smtp_email"))
+        smtp_password = st.text_input("비밀번호 / 앱 비밀번호",
+                                     value=st.session_state.db["settings"].get_setting("smtp_password"),
+                                     type="password")
+
+    if st.button("이메일 설정 저장", use_container_width=True):
+        st.session_state.db["settings"].set_setting("smtp_host", smtp_host)
+        st.session_state.db["settings"].set_setting("smtp_port", smtp_port)
+        st.session_state.db["settings"].set_setting("smtp_email", smtp_email)
+        st.session_state.db["settings"].set_setting("smtp_password", smtp_password)
+        st.success("이메일 설정이 저장되었습니다.")
+
+    st.markdown("---")
+
+    st.markdown("### 🏢 회사 정보")
+    col1, col2 = st.columns(2)
+
+    with col1:
+        company_name = st.text_input("회사명",
+                                    value=st.session_state.db["settings"].get_setting("company_name"))
+        company_address = st.text_input("주소",
+                                       value=st.session_state.db["settings"].get_setting("company_address"))
+
+    with col2:
+        company_phone = st.text_input("연락처",
+                                     value=st.session_state.db["settings"].get_setting("company_phone"))
+
+    if st.button("회사 정보 저장", use_container_width=True):
+        st.session_state.db["settings"].set_setting("company_name", company_name)
+        st.session_state.db["settings"].set_setting("company_address", company_address)
+        st.session_state.db["settings"].set_setting("company_phone", company_phone)
+        st.success("회사 정보가 저장되었습니다.")
+
+    st.markdown("---")
+
+    st.markdown("### 🤖 AI 설정")
+    st.info("OpenAI API를 사용하여 견적서를 자동 생성합니다.")
+
+    api_key = st.text_input("OpenAI API Key",
+                           value=st.session_state.db["settings"].get_setting("openai_api_key"),
+                           type="password")
+
+    if st.button("API 키 저장", use_container_width=True):
+        st.session_state.db["settings"].set_setting("openai_api_key", api_key)
+        st.success("API 키가 저장되었습니다.")
+
+
+# ===== 계약 관리 페이지 =====
+
+def render_contracts():
+    """계약 관리 페이지"""
+    st.markdown("## 📄 계약 관리")
+
+    # 탭
+    tab1, tab2, tab3 = st.tabs(["➕ 계약서 생성", "📋 계약서 목록", "🔗 서명 링크"])
+
+    # ===== 계약서 생성 =====
+    with tab1:
+        st.markdown("### ➕ 계약서 생성")
+        st.info("견적서가 승인(approved) 상태인 경우 계약서를 생성할 수 있습니다.")
+
+        # 승인된 견적서 목록
+        quotations = st.session_state.db["quotation"].get_all_quotations()
+        approved_quotations = [q for q in quotations if q["status"] == "approved"]
+
+        if approved_quotations:
+            quotation_options = {
+                f"{q['quotation_number']} - {q.get('client_name', '-')} ({format_currency(int(q['total_amount']))})": q
+                for q in approved_quotations
+            }
+
+            selected_quotation_option = st.selectbox("견적서 선택", list(quotation_options.keys()))
+
+            if selected_quotation_option:
+                quotation = quotation_options[selected_quotation_option]
+
+                # 견적서 내용 미리보기
+                with st.expander("📄 견적서 내용 보기", expanded=False):
+                    items = quotation.get('items', [])
+                    for item in items:
+                        st.markdown(f"- **{item.get('name', '-')}**: {format_currency(item.get('unit_price', item.get('price', 0)))}")
+
+                    total = int(quotation['total_amount'])
+                    st.markdown(f"**합계:** {format_currency(total)} (+VAT: {format_currency(int(total * 0.1))})")
+
+                if st.button("📄 계약서 생성", use_container_width=True, type="primary"):
+                    # 계약서 생성
+                    contract_gen = ContractGenerator()
+
+                    # 고객 정보
+                    client = st.session_state.db["client"].get_client(quotation['client_id'])
+
+                    # 회사 정보
+                    settings = st.session_state.db["settings"].get_all_settings()
+                    company_info = {
+                        'name': settings.get('company_name'),
+                        'phone': settings.get('company_phone'),
+                        'address': settings.get('company_address'),
+                    }
+
+                    # 계약서 내용 생성
+                    contract_data = contract_gen.generate_contract_from_quotation(
+                        quotation=quotation,
+                        client=client,
+                        company_info=company_info
+                    )
+
+                    # 데이터베이스에 계약서 저장 (ContractDB의 메서드 사용)
+                    import sqlite3
+                    conn = st.session_state.db["settings"].get_connection()
+                    cursor = conn.cursor()
+
+                    cursor.execute("""
+                        INSERT INTO contracts (quotation_id, client_id, contract_number, content, status)
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (
+                        quotation['id'],
+                        quotation['client_id'],
+                        contract_data['contract_number'],
+                        contract_data['content'],
+                        'pending'
+                    ))
+                    contract_id = cursor.lastrowid
+                    conn.commit()
+                    conn.close()
+
+                    st.success(f"✅ 계약서가 생성되었습니다! (계약번호: {contract_data['contract_number']})")
+                    st.rerun()
+        else:
+            st.info("승인된 견적서가 없습니다. 먼저 견적서를 승인해주세요.")
+
+    # ===== 계약서 목록 =====
+    with tab2:
+        st.markdown("### 📋 계약서 목록")
+
+        # 계약서 조회
+        import sqlite3
+        conn = st.session_state.db["settings"].get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT c.*, cl.name as client_name, cl.email as client_email,
+                   q.quotation_number, q.total_amount
+            FROM contracts c
+            LEFT JOIN clients cl ON c.client_id = cl.id
+            LEFT JOIN quotations q ON c.quotation_id = q.id
+            ORDER BY c.created_at DESC
+        """)
+        contracts = [dict(row) for row in cursor.fetchall()]
+        conn.close()
+
+        if contracts:
+            # 계약서 표시
+            for contract in contracts:
+                with st.container():
+                    col1, col2, col3 = st.columns([3, 2, 1])
+
+                    with col1:
+                        st.markdown(f"### {contract.get('contract_number', '-')}")
+                        st.markdown(f"**고객:** {contract.get('client_name', '-')}")
+
+                    with col2:
+                        st.markdown(f"{get_status_badge(contract.get('status', 'pending'))}")
+                        st.markdown(f"{format_currency(contract.get('total_amount', 0) * 1.1)}")
+
+                    with col3:
+                        if st.button("상세", key=f"contract_{contract['id']}", use_container_width=True):
+                            st.session_state.selected_contract = contract['id']
+                            st.rerun()
+
+                st.markdown("---")
+
+            # 선택된 계약서 상세
+            if "selected_contract" in st.session_state:
+                contract_id = st.session_state.selected_contract
+                contract = next((c for c in contracts if c['id'] == contract_id), None)
+
+                if contract:
+                    st.markdown("### 계약서 상세")
+
+                    col1, col2 = st.columns([2, 1])
+
+                    with col1:
+                        # 계약서 내용 표시 (HTML)
+                        st.markdown("#### 계약서 내용")
+                        st.markdown(
+                            f'<div style="border: 1px solid #e2e8f0; padding: 20px; border-radius: 12px; max-height: 400px; overflow-y: auto;">{contract.get("content", "")}</div>',
+                            unsafe_allow_html=True
+                        )
+
+                    with col2:
+                        st.markdown("#### 서명 현황")
+
+                        # 고객 서명
+                        if contract.get('client_signature'):
+                            st.success("✅ 고객 서명 완료")
+                            st.caption(f"서명일: {format_date(contract.get('client_signed_at'))}")
+                        else:
+                            st.warning("⏳ 고객 서명 대기중")
+
+                        st.markdown("---")
+
+                        # 관리자 서명
+                        if contract.get('admin_signature'):
+                            st.success("✅ 관리자 서명 완료")
+                            st.caption(f"서명일: {format_date(contract.get('admin_signed_at'))}")
+                        else:
+                            if st.button("✍️ 관리자 서명하기", use_container_width=True):
+                                # 관리자 서명 모달
+                                st.session_state.show_admin_sign = True
+                                st.rerun()
+
+                        st.markdown("---")
+
+                        # 서명 링크 생성
+                        if not contract.get('client_signature'):
+                            # 서명 토큰 생성
+                            sign_token = secrets.token_urlsafe(16)
+
+                            # 서명 링크
+                            sign_url = f"http://localhost:8501/contract/sign/{sign_token}"
+                            st.markdown("#### 🔗 고객 서명 링크")
+                            st.code(sign_url, language="text")
+
+                            st.info("이 링크를 고객에게 공유하여 서명을 요청하세요.")
+
+                    if st.button("닫기"):
+                        del st.session_state.selected_contract
+                        if "show_admin_sign" in st.session_state:
+                            del st.session_state.show_admin_sign
+                        st.rerun()
+        else:
+            st.info("등록된 계약서가 없습니다.")
+
+    # ===== 서명 링크 관리 =====
+    with tab3:
+        st.markdown("### 🔗 서명 링크 발송")
+        st.info("계약서 서명 링크를 생성하여 고객에게 이메일로 발송할 수 있습니다.")
+
+        if contracts:
+            pending_contracts = [c for c in contracts if not c.get('client_signature')]
+
+            if pending_contracts:
+                contract_options = {
+                    f"{c.get('contract_number', '-')} - {c.get('client_name', '-')}": c
+                    for c in pending_contracts
+                }
+
+                selected_contract_option = st.selectbox("계약서 선택", list(contract_options.keys()))
+
+                if selected_contract_option:
+                    contract = contract_options[selected_contract_option]
+
+                    col1, col2 = st.columns([2, 1])
+
+                    with col1:
+                        st.markdown(f"**고객 이메일:** {contract.get('client_email', '-')}")
+
+                        sign_token = secrets.token_urlsafe(16)
+                        sign_url = f"http://localhost:8501/contract/sign/{sign_token}"
+                        st.markdown(f"**서명 링크:**")
+                        st.code(sign_url, language="text")
+
+                    with col2:
+                        if st.button("📧 이메일 발송", use_container_width=True):
+                            # SMTP 설정 확인
+                            smtp_settings = st.session_state.db["settings"].get_all_settings()
+                            sender = EmailSender.create_from_settings(smtp_settings)
+
+                            if not sender:
+                                st.error("SMTP 설정이 되어 있지 않습니다.")
+                            else:
+                                try:
+                                    result = sender.send_email(
+                                        to_email=contract.get('client_email', ''),
+                                        subject=f"[계약서 서명 요청] {contract.get('contract_number', '-')}",
+                                        body=f"""안녕하세요,
+
+계약서에 서명해주세요.
+
+아래 링크에서 계약서를 확인하고 서명할 수 있습니다.
+{sign_url}
+
+감사합니다.""",
+                                        html_body=f"""<!DOCTYPE html>
+<html>
+<body>
+    <h2>계약서 서명 요청</h2>
+    <p>안녕하세요,</p>
+    <p>계약서에 서명해주세요.</p>
+    <p><a href="{sign_url}" style="background: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px;">계약서 서명하기</a></p>
+</body>
+</html>""",
+                                        from_name=smtp_settings.get('company_name')
+                                    )
+
+                                    if result['success']:
+                                        st.success("✅ " + result['message'])
+                                    else:
+                                        st.error("❌ " + result['message'])
+                                except Exception as e:
+                                    st.error(f"이메일 발송 오류: {str(e)}")
+            else:
+                st.info("서명 대기 중인 계약서가 없습니다.")
+        else:
+            st.info("등록된 계약서가 없습니다.")
+
+
+# ===== 정산 관리 페이지 =====
+
+def render_payments():
+    """정산 관리 페이지"""
+    st.markdown("## 💳 정산 관리")
+
+    # 탭
+    tab1, tab2 = st.tabs(["➕ 청구서 생성", "📋 결제 현황"])
+
+    # ===== 청구서 생성 =====
+    with tab1:
+        st.markdown("### ➕ 청구서 생성")
+
+        projects = st.session_state.db["project"].get_all_projects()
+        active_projects = [p for p in projects if p["status"] in ["planning", "active"]]
+
+        if active_projects:
+            project_options = {
+                f"{p['name']} ({p.get('client_name', '-')}): {format_currency(p.get('total_contract_amount', 0))}": p
+                for p in active_projects
+            }
+
+            selected_project_option = st.selectbox("프로젝트 선택", list(project_options.keys()))
+
+            if selected_project_option:
+                project = project_options[selected_project_option]
+
+                col1, col2, col3 = st.columns(3)
+
+                with col1:
+                    payment_type = st.selectbox("결제 유형",
+                                               ["계약금", "중도금", "잔금", "추가 비용"],
+                                               index=0)
+
+                with col2:
+                    amount = st.number_input("금액 (원)", min_value=0, value=0)
+
+                with col3:
+                    due_date = st.date_input("입금 예정일")
+
+                notes = st.text_area("비고")
+
+                if st.button("💳 청구서 생성", use_container_width=True):
+                    import sqlite3
+                    conn = st.session_state.db["settings"].get_connection()
+                    cursor = conn.cursor()
+
+                    # 송장번호 생성
+                    invoice_number = f"INV-{datetime.now().strftime('%Y%m%d')}-{project['id']:04d}"
+
+                    cursor.execute("""
+                        INSERT INTO payments (project_id, client_id, payment_type, amount, due_date, invoice_number, notes, status)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        project['id'],
+                        project['client_id'],
+                        payment_type,
+                        amount,
+                        due_date.isoformat() if due_date else None,
+                        invoice_number,
+                        notes,
+                        'pending'
+                    ))
+                    payment_id = cursor.lastrowid
+                    conn.commit()
+                    conn.close()
+
+                    st.success(f"✅ 청구서가 생성되었습니다! (송장번호: {invoice_number})")
+                    st.rerun()
+        else:
+            st.info("진행 중인 프로젝트가 없습니다.")
+
+    # ===== 결제 현황 =====
+    with tab2:
+        st.markdown("### 📋 결제 현황")
+
+        # 결제 내역 조회
+        import sqlite3
+        conn = st.session_state.db["settings"].get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT p.*, pr.name as project_name, cl.name as client_name, cl.email as client_email
+            FROM payments p
+            LEFT JOIN projects pr ON p.project_id = pr.id
+            LEFT JOIN clients cl ON p.client_id = cl.id
+            ORDER BY p.due_date ASC
+        """)
+        payments = [dict(row) for row in cursor.fetchall()]
+        conn.close()
+
+        if payments:
+            # 요약
+            total_pending = sum(p['amount'] for p in payments if p['status'] == 'pending')
+            total_paid = sum(p['amount'] for p in payments if p['status'] == 'paid')
+
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("총 청구액", format_currency(int(sum(p['amount'] for p in payments))))
+            with col2:
+                st.metric("입금 대기", format_currency(int(total_pending)))
+            with col3:
+                st.metric("입금 완료", format_currency(int(total_paid)))
+
+            st.markdown("---")
+
+            # 결제 내역 테이블
+            payment_data = []
+            for p in payments:
+                payment_data.append({
+                    "송장번호": p.get('invoice_number', '-'),
+                    "프로젝트": p.get('project_name', '-'),
+                    "고객": p.get('client_name', '-'),
+                    "유형": p.get('payment_type', '-'),
+                    "금액": format_currency(int(p['amount'])),
+                    "입금 예정일": format_date(p.get('due_date')),
+                    "상태": get_status_badge(p.get('status', 'pending'))
+                })
+
+            st.dataframe(pd.DataFrame(payment_data), use_container_width=True, hide_index=True)
+
+            # 상세 보기
+            st.markdown("### 결제 상세")
+            payment_ids = [str(p['id']) for p in payments]
+            selected_id = st.selectbox("결제 선택", [""] + payment_ids,
+                                     format_func=lambda x: "선택하세요" if x == "" else f"{x}번 결제")
+
+            if selected_id:
+                payment = next((p for p in payments if p['id'] == int(selected_id)), None)
+                if payment:
+                    col1, col2 = st.columns([2, 1])
+
+                    with col1:
+                        st.markdown(f"#### {payment.get('invoice_number', '-')}")
+                        st.markdown(f"**프로젝트:** {payment.get('project_name', '-'}")
+                        st.markdown(f"**고객:** {payment.get('client_name', '-'}")
+                        st.markdown(f"**결제 유형:** {payment.get('payment_type', '-'}")
+                        st.markdown(f"**금액:** {format_currency(int(payment['amount']))}")
+                        st.markdown(f"**입금 예정일:** {format_date(payment.get('due_date'))}")
+                        st.markdown(f"**비고:** {payment.get('notes', '-')}")
+
+                    with col2:
+                        st.markdown("#### 작업")
+
+                        # 상태 변경
+                        statuses = ["pending", "paid", "overdue"]
+                        status_labels = {"pending": "대기", "paid": "완료", "overdue": "연체"}
+                        current_status = payment.get('status', 'pending')
+
+                        new_status = st.selectbox("결제 상태", statuses,
+                                                index=statuses.index(current_status) if current_status in statuses else 0,
+                                                format_func=lambda x: status_labels[x])
+
+                        if st.button("🔄 상태 변경", use_container_width=True):
+                            import sqlite3
+                            conn = st.session_state.db["settings"].get_connection()
+                            cursor = conn.cursor()
+
+                            paid_date = "CURRENT_TIMESTAMP" if new_status == "paid" else "NULL"
+                            cursor.execute(f"""
+                                UPDATE payments SET status = ?, paid_date = {paid_date}
+                                WHERE id = ?
+                            """, (new_status, payment['id']))
+                            conn.commit()
+                            conn.close()
+
+                            st.success("상태가 변경되었습니다.")
+                            st.rerun()
+
+                        if st.button("📧 입금 요청 알림", use_container_width=True):
+                            # SMTP 설정 확인
+                            smtp_settings = st.session_state.db["settings"].get_all_settings()
+                            sender = EmailSender.create_from_settings(smtp_settings)
+
+                            if not sender:
+                                st.error("SMTP 설정이 되어 있지 않습니다.")
+                            else:
+                                try:
+                                    result = sender.send_email(
+                                        to_email=payment.get('client_email', ''),
+                                        subject=f"[입금 요청] {payment.get('invoice_number', '-')}",
+                                        body=f"""안녕하세요,
+
+{payment.get('project_name', '-')} 프로젝트의 {payment.get('payment_type', '-')} 입금을 안내드립니다.
+
+송장번호: {payment.get('invoice_number', '-')}
+금액: {format_currency(int(payment['amount']))}
+입금 기한: {format_date(payment.get('due_date'))}
+
+지정된 기한 내에 입금 부탁드립니다.
+
+감사합니다.""",
+                                        from_name=smtp_settings.get('company_name')
+                                    )
+
+                                    if result['success']:
+                                        st.success("✅ " + result['message'])
+                                    else:
+                                        st.error("❌ " + result['message'])
+                                except Exception as e:
+                                    st.error(f"이메일 발송 오류: {str(e)}")
+        else:
+            st.info("등록된 결제 내역이 없습니다.")
+
+
+# ===== 메인 앱 =====
+
+def main():
+    """메인 앱"""
+    render_sidebar()
+
+    # 페이지 라우팅
+    page_renderers = {
+        "dashboard": render_dashboard,
+        "clients": render_clients,
+        "inquiries": render_inquiries,
+        "quotations": render_quotations,
+        "contracts": render_contracts,
+        "projects": render_projects,
+        "payments": render_payments,
+        "settings": render_settings,
+    }
+
+    renderer = page_renderers.get(st.session_state.current_page, render_dashboard)
+    renderer()
+
+
+if __name__ == "__main__":
+    main()

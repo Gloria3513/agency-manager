@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>전자 계약서 서명</title>
+    <style>
+        :root {
+            --primary: #2563eb;
+            --primary-dark: #1d4ed8;
+            --bg: #f8fafc;
+            --card-bg: #ffffff;
+            --text: #1e293b;
+            --text-light: #64748b;
+            --border: #e2e8f0;
+            --success: #10b981;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        .header {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+            color: white;
+            padding: 30px;
+            border-radius: 16px 16px 0 0;
+            text-align: center;
+        }
+
+        .header h1 { font-size: 24px; margin-bottom: 8px; }
+        .header p { opacity: 0.9; font-size: 14px; }
+
+        .contract-content {
+            background: var(--card-bg);
+            padding: 40px;
+            border-radius: 0 0 16px 16px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+
+        .contract-info {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 20px;
+            margin: 30px 0;
+            padding: 20px;
+            background: var(--bg);
+            border-radius: 12px;
+        }
+
+        .info-item {
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .info-label { color: var(--text-light); font-size: 14px; }
+        .info-value { font-weight: 600; }
+
+        h2 {
+            font-size: 18px;
+            margin: 30px 0 15px;
+            color: var(--primary);
+            border-bottom: 2px solid var(--border);
+            padding-bottom: 8px;
+        }
+
+        .items-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+
+        .items-table th,
+        .items-table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .items-table th {
+            background: var(--bg);
+            font-weight: 600;
+            color: var(--text-light);
+            font-size: 13px;
+        }
+
+        .amount-section {
+            background: var(--bg);
+            padding: 20px;
+            border-radius: 12px;
+            margin: 20px 0;
+        }
+
+        .amount-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+        }
+
+        .amount-row.total {
+            border-top: 2px solid var(--border);
+            margin-top: 8px;
+            padding-top: 16px;
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--primary);
+        }
+
+        .signature-section {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin: 40px 0;
+        }
+
+        .signature-box {
+            border: 2px dashed var(--border);
+            border-radius: 12px;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .signature-box.signed {
+            border-style: solid;
+            border-color: var(--success);
+            background: #f0fdf4;
+        }
+
+        .signature-box h3 {
+            margin-bottom: 15px;
+            color: var(--primary);
+        }
+
+        .signature-canvas {
+            width: 100%;
+            height: 150px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            cursor: crosshair;
+            background: white;
+            touch-action: none;
+        }
+
+        .signature-img {
+            max-width: 100%;
+            max-height: 150px;
+        }
+
+        .signature-info {
+            font-size: 12px;
+            color: var(--text-light);
+            margin-top: 8px;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 14px;
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--primary-dark);
+        }
+
+        .btn-secondary {
+            background: var(--bg);
+            color: var(--text);
+            border: 1px solid var(--border);
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .action-bar {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        .signed-badge {
+            display: inline-block;
+            background: var(--success);
+            color: white;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-top: 10px;
+        }
+
+        .alert {
+            padding: 16px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+
+        .alert-warning {
+            background: #fef3c7;
+            color: #92400e;
+            border-left: 4px solid #f59e0b;
+        }
+
+        .alert-success {
+            background: #dcfce7;
+            color: #166534;
+            border-left: 4px solid var(--success);
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+        }
+
+        .loading.show {
+            display: block;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid var(--border);
+            border-top-color: var(--primary);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        @media (max-width: 600px) {
+            .contract-info,
+            .signature-section {
+                grid-template-columns: 1fr;
+            }
+
+            .contract-content {
+                padding: 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📄 전자 계약서</h1>
+            <p>계약서를 확인하고 서명해주세요</p>
+        </div>
+
+        <div class="contract-content" id="contractContent">
+            <!-- 계약서 내용이 여기에 로드됩니다 -->
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <p>계약서를 불러오는 중...</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const CONTRACT_TOKEN = '{{ contract_token }}';
+
+        // 계약서 로드
+        async function loadContract() {
+            try {
+                const response = await fetch(`/api/contract/${CONTRACT_TOKEN}`);
+                if (!response.ok) throw new Error('계약서를 찾을 수 없습니다');
+
+                const data = await response.json();
+
+                if (data.signed) {
+                    showSignedContract(data);
+                } else {
+                    showContractForSigning(data);
+                }
+            } catch (error) {
+                document.getElementById('contractContent').innerHTML =
+                    `<div class="alert alert-warning">${error.message}</div>`;
+            }
+        }
+
+        function showContractForSigning(contract) {
+            document.getElementById('contractContent').innerHTML = contract.content;
+
+            // 서명 캔버스 설정
+            setupSignatureCanvas();
+        }
+
+        function showSignedContract(contract) {
+            document.getElementById('contractContent').innerHTML = contract.content;
+
+            // 서명된 상태 표시
+            const clientSigBox = document.querySelector('#client_sig').closest('.signature-box');
+            if (clientSigBox) {
+                clientSigBox.classList.add('signed');
+                clientSigBox.querySelector('.signature-canvas').outerHTML =
+                    `<img src="${contract.client_signature}" class="signature-img" alt="서명">`;
+                clientSigBox.querySelector('.signature-info').textContent =
+                    `서명일: ${new Date(contract.client_signed_at).toLocaleString('ko-KR')}`;
+            }
+        }
+
+        let canvas, ctx, isDrawing = false;
+        let signatureData = null;
+
+        function setupSignatureCanvas() {
+            canvas = document.querySelector('.signature-canvas');
+            if (!canvas) return;
+
+            ctx = canvas.getContext('2d');
+
+            // 캔버스 크기 설정
+            function resizeCanvas() {
+                const rect = canvas.getBoundingClientRect();
+                canvas.width = rect.width;
+                canvas.height = rect.height;
+            }
+            resizeCanvas();
+            window.addEventListener('resize', resizeCanvas);
+
+            // 그리기 설정
+            ctx.lineWidth = 2;
+            ctx.lineCap = 'round';
+            ctx.strokeStyle = '#000';
+
+            // 이벤트 리스너
+            canvas.addEventListener('mousedown', startDrawing);
+            canvas.addEventListener('mousemove', draw);
+            canvas.addEventListener('mouseup', stopDrawing);
+            canvas.addEventListener('mouseout', stopDrawing);
+
+            // 터치 이벤트
+            canvas.addEventListener('touchstart', handleTouch);
+            canvas.addEventListener('touchmove', handleTouchMove);
+            canvas.addEventListener('touchend', stopDrawing);
+
+            // 지우기 버튼
+            document.getElementById('clearBtn')?.addEventListener('click', clearCanvas);
+            document.getElementById('signBtn')?.addEventListener('click', submitSignature);
+        }
+
+        function startDrawing(e) {
+            isDrawing = true;
+            ctx.beginPath();
+            ctx.moveTo(e.offsetX, e.offsetY);
+        }
+
+        function draw(e) {
+            if (!isDrawing) return;
+            ctx.lineTo(e.offsetX, e.offsetY);
+            ctx.stroke();
+        }
+
+        function stopDrawing() {
+            if (isDrawing) {
+                isDrawing = false;
+                signatureData = canvas.toDataURL('image/png');
+            }
+        }
+
+        function handleTouch(e) {
+            e.preventDefault();
+            const touch = e.touches[0];
+            const rect = canvas.getBoundingClientRect();
+            isDrawing = true;
+            ctx.beginPath();
+            ctx.moveTo(touch.clientX - rect.left, touch.clientY - rect.top);
+        }
+
+        function handleTouchMove(e) {
+            e.preventDefault();
+            if (!isDrawing) return;
+            const touch = e.touches[0];
+            const rect = canvas.getBoundingClientRect();
+            ctx.lineTo(touch.clientX - rect.left, touch.clientY - rect.top);
+            ctx.stroke();
+        }
+
+        function clearCanvas() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            signatureData = null;
+        }
+
+        async function submitSignature() {
+            if (!signatureData) {
+                alert('서명을 입력해주세요');
+                return;
+            }
+
+            const btn = document.getElementById('signBtn');
+            btn.disabled = true;
+            btn.textContent = '제출 중...';
+
+            try {
+                const response = await fetch(`/api/contract/${CONTRACT_TOKEN}/sign`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        signature: signatureData,
+                        name: document.getElementById('signerName')?.value || ''
+                    })
+                });
+
+                if (!response.ok) throw new Error('서명 제출에 실패했습니다');
+
+                alert('서명이 완료되었습니다.');
+                location.reload();
+            } catch (error) {
+                alert(error.message);
+                btn.disabled = false;
+                btn.textContent = '서명 제출';
+            }
+        }
+
+        // 페이지 로드 시 계약서 불러오기
+        loadContract();
+    </script>
+</body>
+</html>

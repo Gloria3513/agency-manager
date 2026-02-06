@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>프로젝트 문의하기</title>
+    <style>
+        :root {
+            --primary-color: #2563eb;
+            --primary-dark: #1d4ed8;
+            --primary-light: #3b82f6;
+            --bg-color: #f8fafc;
+            --card-bg: #ffffff;
+            --text-primary: #1e293b;
+            --text-secondary: #64748b;
+            --border-color: #e2e8f0;
+            --success-color: #10b981;
+            --error-color: #ef4444;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .container {
+            background: var(--card-bg);
+            border-radius: 24px;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+            max-width: 600px;
+            width: 100%;
+            padding: 40px;
+            animation: slideUp 0.5s ease-out;
+        }
+
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 32px;
+        }
+
+        .header h1 {
+            font-size: 28px;
+            color: var(--text-primary);
+            margin-bottom: 8px;
+            font-weight: 700;
+        }
+
+        .header p {
+            color: var(--text-secondary);
+            font-size: 15px;
+        }
+
+        .form-group {
+            margin-bottom: 24px;
+        }
+
+        .form-group label {
+            display: block;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+            padding: 14px 16px;
+            border: 2px solid var(--border-color);
+            border-radius: 12px;
+            font-size: 15px;
+            transition: all 0.2s ease;
+            background: var(--bg-color);
+            color: var(--text-primary);
+        }
+
+        .form-group input:focus,
+        .form-group select:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: var(--primary-color);
+            background: white;
+            box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.1);
+        }
+
+        .form-group textarea {
+            resize: vertical;
+            min-height: 120px;
+            font-family: inherit;
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }
+
+        @media (max-width: 500px) {
+            .form-row {
+                grid-template-columns: 1fr;
+            }
+
+            .container {
+                padding: 24px;
+            }
+        }
+
+        .submit-btn {
+            width: 100%;
+            padding: 16px;
+            background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-dark) 100%);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            margin-top: 8px;
+        }
+
+        .submit-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px -5px rgba(37, 99, 235, 0.4);
+        }
+
+        .submit-btn:active {
+            transform: translateY(0);
+        }
+
+        .submit-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .success-message {
+            display: none;
+            text-align: center;
+            padding: 40px;
+        }
+
+        .success-message.show {
+            display: block;
+        }
+
+        .success-icon {
+            width: 80px;
+            height: 80px;
+            background: var(--success-color);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 24px;
+            animation: scaleIn 0.5s ease-out;
+        }
+
+        @keyframes scaleIn {
+            from {
+                transform: scale(0);
+            }
+            to {
+                transform: scale(1);
+            }
+        }
+
+        .success-icon svg {
+            width: 40px;
+            height: 40px;
+            fill: white;
+        }
+
+        .success-message h2 {
+            color: var(--text-primary);
+            margin-bottom: 8px;
+            font-size: 24px;
+        }
+
+        .success-message p {
+            color: var(--text-secondary);
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+        }
+
+        .loading.show {
+            display: block;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid var(--border-color);
+            border-top-color: var(--primary-color);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 16px;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        .progress-bar {
+            height: 4px;
+            background: var(--border-color);
+            border-radius: 2px;
+            overflow: hidden;
+            margin-top: 24px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--primary-color), var(--primary-light));
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚀 프로젝트 문의하기</h1>
+            <p>궁금하신 점을 알려주시면 빠르게 답변 드리겠습니다</p>
+        </div>
+
+        <form id="surveyForm">
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="name">이름 *</label>
+                    <input type="text" id="name" name="name" required placeholder="홍길동">
+                </div>
+                <div class="form-group">
+                    <label for="company">회사명</label>
+                    <input type="text" id="company" name="company" placeholder="(주)회사명">
+                </div>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="email">이메일 *</label>
+                    <input type="email" id="email" name="email" required placeholder="example@email.com">
+                </div>
+                <div class="form-group">
+                    <label for="phone">연락처 *</label>
+                    <input type="tel" id="phone" name="phone" required placeholder="010-0000-0000">
+                </div>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="projectType">프로젝트 유형 *</label>
+                    <select id="projectType" name="project_type" required>
+                        <option value="">선택해주세요</option>
+                        <option value="website">웹사이트 제작</option>
+                        <option value="landing">랜딩페이지</option>
+                        "web_app">웹 애플리케이션</option>
+                        <option value="mobile_app">모바일 앱</option>
+                        <option value="web_app">웹 애플리케이션</option>
+                        <option value="mobile_app">모바일 앱</option>
+                        <option value="maintenance">유지보수</option>
+                        <option value="consulting">컨설팅</option>
+                        <option value="other">기타</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="budget">예산</label>
+                    <select id="budget" name="budget">
+                        <option value="">선택해주세요</option>
+                        <option value="100-300">100만원 ~ 300만원</option>
+                        <option value="300-500">300만원 ~ 500만원</option>
+                        <option value="500-1000">500만원 ~ 1,000만원</option>
+                        <option value="1000-3000">1,000만원 ~ 3,000만원</option>
+                        <option value="3000+">3,000만원 이상</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="duration">희망 완료 기간</label>
+                <select id="duration" name="duration">
+                    <option value="">선택해주세요</option>
+                    <option value="1month">1개월 이내</option>
+                    <option value="2months">2개월 이내</option>
+                    <option value="3months">3개월 이내</option>
+                    <option value="flexible">유동적</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="description">프로젝트 상세 설명 *</label>
+                <textarea id="description" name="description" required placeholder="원하시는 서비스에 대해 자세히 설명해주세요.&#10;&#10;예: 쇼핑몰 웹사이트 제작을 원합니다. 상품 등록, 결제 시스템, 관리자 페이지가 필요합니다."></textarea>
+            </div>
+
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+
+            <button type="submit" class="submit-btn" id="submitBtn">문의하기</button>
+        </form>
+
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p>접수 중입니다...</p>
+        </div>
+
+        <div class="success-message" id="successMessage">
+            <div class="success-icon">
+                <svg viewBox="0 0 24 24">
+                    <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/>
+                </svg>
+            </div>
+            <h2>문의가 접수되었습니다!</h2>
+            <p>빠른 시일 내에 연락 드리겠습니다.</p>
+        </div>
+    </div>
+
+    <script>
+        const form = document.getElementById('surveyForm');
+        const loading = document.getElementById('loading');
+        const successMessage = document.getElementById('successMessage');
+        const progressFill = document.getElementById('progressFill');
+
+        // 진행률 표시
+        const inputs = form.querySelectorAll('input, select, textarea');
+        inputs.forEach(input => {
+            input.addEventListener('input', updateProgress);
+        });
+
+        function updateProgress() {
+            const required = form.querySelectorAll('[required]');
+            const filled = Array.from(required).filter(i => i.value.trim() !== '');
+            const progress = (filled.length / required.length) * 100;
+            progressFill.style.width = progress + '%';
+        }
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const submitBtn = document.getElementById('submitBtn');
+            submitBtn.disabled = true;
+
+            const formData = new FormData(form);
+            const data = Object.fromEntries(formData);
+
+            form.style.display = 'none';
+            loading.classList.add('show');
+
+            try {
+                // Streamlit 앱의 API 엔드포인트로 전송
+                // 개발 중에는 로컬 스토리지에 저장 (실제로는 FastAPI/Flask 서버 필요)
+                const response = await fetch('/api/survey', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(data)
+                });
+
+                if (response.ok) {
+                    loading.classList.remove('show');
+                    successMessage.classList.add('show');
+                } else {
+                    throw new Error('서버 오류');
+                }
+            } catch (error) {
+                // 개발용: API 없을 때 로컬 스토리지에 저장
+                console.log('Survey data:', data);
+                localStorage.setItem('survey_' + Date.now(), JSON.stringify(data));
+                loading.classList.remove('show');
+                successMessage.classList.add('show');
+            }
+        });
+
+        // 초기 진행률 업데이트
+        updateProgress();
+    </script>
+</body>
+</html>
