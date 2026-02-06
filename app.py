@@ -46,6 +46,19 @@ def load_css():
 
 load_css()
 
+# 로그인 상태 초기화 (먼저 해야 함)
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+if "user" not in st.session_state:
+    st.session_state.user = None
+
+if "current_page" not in st.session_state:
+    st.session_state.current_page = "login"
+
+if "dark_mode" not in st.session_state:
+    st.session_state.dark_mode = False
+
 # 세션 상태 초기화
 if "db" not in st.session_state:
     st.session_state.db = {
@@ -67,23 +80,55 @@ if "db" not in st.session_state:
         "comment": CommentDB()
     }
 
-# 기본 관리자 계정 초기화
+# 기본 관리자 계정 초기화 (직접 구현)
+def init_default_admin():
+    """기본 관리자 계정 생성"""
+    user_db = st.session_state.db["user"]
+
+    try:
+        # 이미 존재하는지 확인
+        existing = user_db.get_user_by_email("admin@agency.com")
+        if existing:
+            return existing['id']
+
+        # 관리자 계정 생성
+        import hashlib
+        password_hash = hashlib.sha256("admin1234".encode()).hexdigest()
+
+        conn = user_db.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO users (email, name, password_hash, role, is_active)
+            VALUES (?, ?, ?, 'admin', 1)
+        """, ("admin@agency.com", "관리자", password_hash))
+        admin_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+
+        return admin_id
+    except Exception as e:
+        print(f"Admin init error: {e}")
+        return None
+
+# 기본 관리자 생성
 try:
-    init_admin_user()
+    init_default_admin()
 except:
     pass
 
-# 인증 관리자
-auth_manager = AuthManager()
-session_manager = SessionManager()
-activity_logger = ActivityLogger()
+# 인증 관리자 (지연 로딩)
+auth_manager = None
+session_manager = None
+activity_logger = None
 
-# 로그인 상태 확인
-if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
-
-if "user" not in st.session_state:
-    st.session_state.user = None
+try:
+    from utils.auth_manager import AuthManager, SessionManager
+    from utils.activity_logger import ActivityLogger
+    auth_manager = AuthManager()
+    session_manager = SessionManager()
+    activity_logger = ActivityLogger()
+except Exception as e:
+    print(f"Auth manager init error: {e}")
 
 if "current_page" not in st.session_state:
     st.session_state.current_page = "dashboard"
@@ -161,52 +206,11 @@ def show_metric_card(title, value, subtitle="", color="blue"):
 def render_sidebar():
     """사이드바 렌더링"""
     with st.sidebar:
-        # 로그인되지 않은 경우
-        if not st.session_state.authenticated:
-            st.markdown("""
-                <div style="text-align: center; padding: 30px 20px;">
-                    <h1 style="font-size: 24px; margin: 0;">🚀 에이전시 관리</h1>
-                    <p style="color: #64748b; margin-top: 10px;">로그인이 필요합니다</p>
-                </div>
-            """, unsafe_allow_html=True)
-            return
-
-        # 로그인된 경우
-        user = st.session_state.user
-        role_labels = {
-            'admin': '관리자',
-            'manager': '매니저',
-            'member': '팀원',
-            'viewer': '게스트'
-        }
-        role_badge_colors = {
-            'admin': 'badge-danger',
-            'manager': 'badge-warning',
-            'member': 'badge-info',
-            'viewer': 'badge-neutral'
-        }
-
         st.markdown("""
             <div style="text-align: center; padding: 20px 0;">
                 <h1 style="font-size: 24px; margin: 0;">🚀 에이전시 관리</h1>
             </div>
         """, unsafe_allow_html=True)
-
-        # 사용자 정보
-        st.markdown(f"""
-            <div style="background: #f8fafc; padding: 15px; border-radius: 12px; margin-bottom: 15px;">
-                <div style="font-weight: 600;">👤 {user.get('name', '사용자')}</div>
-                <div style="font-size: 12px; color: #64748b;">{user.get('email', '')}</div>
-                <div style="margin-top: 5px;">
-                    <span class="badge {role_badge_color}">{role_label}</span>
-                </div>
-            </div>
-        """.format(
-            name=user.get('name', '사용자'),
-            email=user.get('email', ''),
-            role_badge_color=role_badge_colors.get(user.get('role', 'member'), 'badge-neutral'),
-            role_label=role_labels.get(user.get('role', 'member'), '팀원')
-        ), unsafe_allow_html=True)
 
         st.markdown("---")
 
@@ -223,42 +227,92 @@ def render_sidebar():
                 </style>
             """, unsafe_allow_html=True)
 
-        # 네비게이션 메뉴 (권한별)
-        st.markdown("### 📁 메뉴")
+        # 로그인 상태에 따른 UI
+        if not st.session_state.authenticated:
+            st.info("로그인이 필요합니다.")
+        else:
+            # 사용자 정보
+            user = st.session_state.user
+            if user:
+                role_labels = {
+                    'admin': '관리자',
+                    'manager': '매니저',
+                    'member': '팀원',
+                    'viewer': '게스트'
+                }
+                role_badge_colors = {
+                    'admin': 'badge-danger',
+                    'manager': 'badge-warning',
+                    'member': 'badge-info',
+                    'viewer': 'badge-neutral'
+                }
 
-        # 사용자 역할에 따른 메뉴 필터링
-        user_role = user.get('role', 'member')
-        accessible_menus = PermissionChecker.get_accessible_menus(user_role)
+                role = user.get('role', 'member')
+                role_badge_color = role_badge_colors.get(role, 'badge-neutral')
+                role_label = role_labels.get(role, '팀원')
 
-        menu_items = {
-            "dashboard": "📊 대시보드",
-            "clients": "👥 고객 관리",
-            "inquiries": "📝 문의 관리",
-            "quotations": "💰 견적 관리",
-            "contracts": "📄 계약 관리",
-            "projects": "🚧 프로젝트 관리",
-            "tasks": "✅ 태스크",
-            "payments": "💳 정산 관리",
-            "calendar": "📅 캘린더",
-            "time_tracker": "⏱️ 시간 추적",
-            "files": "📁 파일 관리",
-            "reports": "📊 리포트",
-            "users": "👥 팀원 관리",
-            "activity": "📜 활동 로그",
-            "settings": "⚙️ 설정",
-        }
-
-        for key, label in menu_items.items():
-            if key in accessible_menus:
-                if st.button(label, key=f"nav_{key}", use_container_width=True,
-                            icon=None, disabled=st.session_state.current_page == key):
-                    st.session_state.current_page = key
-                    st.rerun()
+                st.markdown(f"""
+                    <div style="background: #f8fafc; padding: 15px; border-radius: 12px; margin-bottom: 15px;">
+                        <div style="font-weight: 600;">👤 {user.get('name', '사용자')}</div>
+                        <div style="font-size: 12px; color: #64748b;">{user.get('email', '')}</div>
+                        <div style="margin-top: 5px;">
+                            <span class="badge {role_badge_color}">{role_label}</span>
+                        </div>
+                    </div>
+                """, unsafe_allow_html=True)
 
         st.markdown("---")
 
-        # 로그아웃
-        if st.button("🚪 로그아웃", use_container_width=True):
+        # 네비게이션 메뉴
+        st.markdown("### 📁 메뉴")
+
+        # 로그인되지 않은 경우에는 기본 메뉴만
+        if not st.session_state.authenticated:
+            basic_menus = {
+                "login": "🔐 로그인"
+            }
+            for key, label in basic_menus.items():
+                if st.button(label, key=f"nav_{key}", width='stretch'):
+                    st.session_state.current_page = key
+                    st.rerun()
+        else:
+            # 로그인된 경우 권한별 메뉴
+            user_role = st.session_state.user.get('role', 'member') if st.session_state.user else 'member'
+
+            try:
+                accessible_menus = PermissionChecker.get_accessible_menus(user_role)
+            except:
+                accessible_menus = ["dashboard", "calendar", "time_tracker", "files"]
+
+            menu_items = {
+                "dashboard": "📊 대시보드",
+                "clients": "👥 고객 관리",
+                "inquiries": "📝 문의 관리",
+                "quotations": "💰 견적 관리",
+                "contracts": "📄 계약 관리",
+                "projects": "🚧 프로젝트 관리",
+                "tasks": "✅ 태스크",
+                "payments": "💳 정산 관리",
+                "calendar": "📅 캘린더",
+                "time_tracker": "⏱️ 시간 추적",
+                "files": "📁 파일 관리",
+                "reports": "📊 리포트",
+                "users": "👥 팀원 관리",
+                "activity": "📜 활동 로그",
+                "settings": "⚙️ 설정",
+            }
+
+            for key, label in menu_items.items():
+                if key in accessible_menus:
+                    if st.button(label, key=f"nav_{key}", width='stretch',
+                                icon=None, disabled=st.session_state.current_page == key):
+                        st.session_state.current_page = key
+                        st.rerun()
+
+        st.markdown("---")
+
+        # 로그아웃 버튼 (로그인된 경우)
+        if st.session_state.authenticated and st.button("🚪 로그아웃", width='stretch'):
             st.session_state.authenticated = False
             st.session_state.user = None
             st.session_state.current_page = "login"
@@ -335,7 +389,7 @@ def render_dashboard():
                 plot_bgcolor="rgba(0,0,0,0)",
                 paper_bgcolor="rgba(0,0,0,0)",
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
         else:
             st.info("데이터가 없습니다.")
 
@@ -361,7 +415,7 @@ def render_dashboard():
             colors = ["#3b82f6", "#f59e0b", "#10b981", "#ef4444", "#64748b"]
             fig = px.pie(df_status, values="수", names="상태",
                         color_discrete_sequence=colors)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
         else:
             st.info("데이터가 없습니다.")
 
@@ -375,7 +429,7 @@ def render_dashboard():
         if inquiries:
             df_inquiries = pd.DataFrame(inquiries[:5])
             df_inquiries_display = df_inquiries[["client_name", "project_type", "created_at"]] if "client_name" in df_inquiries.columns else df_inquiries
-            st.dataframe(df_inquiries_display, use_container_width=True, hide_index=True)
+            st.dataframe(df_inquiries_display, width='stretch', hide_index=True)
         else:
             st.info("등록된 문의가 없습니다.")
 
@@ -385,7 +439,7 @@ def render_dashboard():
         if active:
             df_active = pd.DataFrame(active[:5])
             df_display = df_active[["name", "progress", "status"]] if "name" in df_active.columns else df_active
-            st.dataframe(df_display, use_container_width=True, hide_index=True)
+            st.dataframe(df_display, width='stretch', hide_index=True)
         else:
             st.info("진행 중인 프로젝트가 없습니다.")
 
@@ -413,7 +467,7 @@ def render_clients():
 
             col1, col2 = st.columns(2)
             with col1:
-                submit = st.form_submit_button("고객 추가", use_container_width=True)
+                submit = st.form_submit_button("고객 추가", width='stretch')
             with col2:
                 st.write("")
 
@@ -460,7 +514,7 @@ def render_clients():
         for idx, row in display_df.iterrows():
             display_df.at[idx, "status"] = get_status_badge(row["status"])
 
-        st.dataframe(display_df, use_container_width=True, hide_index=True)
+        st.dataframe(display_df, width='stretch', hide_index=True)
 
         # 선택된 고객 상세 보기
         st.markdown("### 고객 상세")
@@ -494,12 +548,12 @@ def render_clients():
                                                 format_func=lambda x: {"lead": "리드", "contacted": "연락중",
                                                                      "quoted": "견적발송", "converted": "계약완료", "lost": "계약실패"}[x])
 
-                        if st.button("상태 업데이트", use_container_width=True):
+                        if st.button("상태 업데이트", width='stretch'):
                             st.session_state.db["client"].update_client(selected_id, status=new_status)
                             st.success("상태가 업데이트되었습니다.")
                             st.rerun()
 
-                        if st.button("고객 삭제", use_container_width=True, type="primary"):
+                        if st.button("고객 삭제", width='stretch', type="primary"):
                             st.session_state.db["client"].delete_client(selected_id)
                             st.success("고객이 삭제되었습니다.")
                             st.rerun()
@@ -533,7 +587,7 @@ def render_inquiries():
         if "project_type" in display_df.columns:
             display_df["project_type"] = display_df["project_type"].map(type_map).fillna(display_df["project_type"])
 
-        st.dataframe(display_df, use_container_width=True, hide_index=True)
+        st.dataframe(display_df, width='stretch', hide_index=True)
 
         # 상세 보기
         st.markdown("### 문의 상세")
@@ -558,13 +612,13 @@ def render_inquiries():
 
                 with col2:
                     st.markdown("#### 빠른 작업")
-                    if st.button("📄 견적서 생성", use_container_width=True):
+                    if st.button("📄 견적서 생성", width='stretch'):
                         # 견적서 페이지로 이동 및 문의 ID 전달
                         st.session_state.selected_inquiry = inquiry
                         st.session_state.current_page = "quotations"
                         st.rerun()
 
-                    if st.button("👤 고객 정보 보기", use_container_width=True):
+                    if st.button("👤 고객 정보 보기", width='stretch'):
                         st.session_state.current_page = "clients"
                         st.rerun()
     else:
@@ -627,7 +681,7 @@ def render_quotations():
                         if not company_info['name']:
                             st.warning("회사 정보를 설정하세요")
 
-                    if st.button("🚀 견적서 생성", use_container_width=True, type="primary"):
+                    if st.button("🚀 견적서 생성", width='stretch', type="primary"):
                         with st.spinner("AI가 견적서를 생성 중입니다..."):
                             pricing_guideline = st.session_state.db["settings"].get_setting("pricing_guideline")
 
@@ -720,7 +774,7 @@ def render_quotations():
                         total = sum(item['amount'] for item in st.session_state.quotation_items)
                         st.markdown(f"**합계: {format_currency(total)}**")
 
-                        if st.form_submit_button("견적서 저장", use_container_width=True):
+                        if st.form_submit_button("견적서 저장", width='stretch'):
                             client_id = client_options[selected_client]
                             quotation_id = st.session_state.db["quotation"].add_quotation(
                                 client_id=client_id,
@@ -752,7 +806,7 @@ def render_quotations():
                     "생성일": format_date(q["created_at"])
                 })
 
-            st.dataframe(pd.DataFrame(display_data), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(display_data), width='stretch', hide_index=True)
 
             # 상세 보기
             st.markdown("### 견적서 상세")
@@ -782,7 +836,7 @@ def render_quotations():
                                     "단가": format_currency(item.get('unit_price', item.get('price', 0))),
                                     "금액": format_currency(item.get('amount', item.get('unit_price', 0) * item.get('quantity', 1)))
                                 })
-                            st.dataframe(pd.DataFrame(item_data), use_container_width=True, hide_index=True)
+                            st.dataframe(pd.DataFrame(item_data), width='stretch', hide_index=True)
 
                         total = int(quotation['total_amount'])
                         vat = int(total * 0.1)
@@ -804,7 +858,7 @@ def render_quotations():
                                                 index=statuses.index(current_status) if current_status in statuses else 0,
                                                 format_func=lambda x: status_labels[x])
 
-                        if st.button("🔄 상태 변경", use_container_width=True):
+                        if st.button("🔄 상태 변경", width='stretch'):
                             st.session_state.db["quotation"].update_quotation_status(int(selected_id), new_status)
                             st.success("상태가 변경되었습니다.")
                             st.rerun()
@@ -812,7 +866,7 @@ def render_quotations():
                         st.markdown("---")
 
                         # PDF 다운로드
-                        if st.button("📄 PDF 다운로드", use_container_width=True):
+                        if st.button("📄 PDF 다운로드", width='stretch'):
                             with st.spinner("PDF를 생성 중입니다..."):
                                 try:
                                     pdf_gen = PDFQuotationGenerator()
@@ -840,13 +894,13 @@ def render_quotations():
                                         data=pdf_data,
                                         file_name=f"견적서_{quotation['quotation_number']}.pdf",
                                         mime="application/pdf",
-                                        use_container_width=True
+                                        width='stretch'
                                     )
                                 except Exception as e:
                                     st.error(f"PDF 생성 오류: {str(e)}")
 
                         # 이메일 발송
-                        if st.button("📧 이메일 발송", use_container_width=True):
+                        if st.button("📧 이메일 발송", width='stretch'):
                             # SMTP 설정 확인
                             smtp_settings = st.session_state.db["settings"].get_all_settings()
                             sender = EmailSender.create_from_settings(smtp_settings)
@@ -919,7 +973,7 @@ def render_projects():
 
                 contract_amount = st.number_input("계약 금액 (원)", min_value=0, value=0)
 
-                if st.form_submit_button("프로젝트 생성", use_container_width=True):
+                if st.form_submit_button("프로젝트 생성", width='stretch'):
                     client_id = client_options[selected_client]
                     project_id = st.session_state.db["project"].add_project(
                         client_id=client_id,
@@ -962,7 +1016,7 @@ def render_projects():
                         st.markdown(f"{format_currency(project.get('total_contract_amount', 0))}")
 
                     with col3:
-                        if st.button("상세", key=f"detail_{project['id']}", use_container_width=True):
+                        if st.button("상세", key=f"detail_{project['id']}", width='stretch'):
                             st.session_state.selected_project = project['id']
                             st.rerun()
 
@@ -1093,7 +1147,7 @@ def render_settings():
         help="각 서비스의 기준 가격을 한 줄에 하나씩 입력하세요."
     )
 
-    if st.button("단가 지침 저장", use_container_width=True):
+    if st.button("단가 지침 저장", width='stretch'):
         st.session_state.db["settings"].set_setting("pricing_guideline", pricing_guideline)
         st.success("단가 지침이 저장되었습니다.")
 
@@ -1117,7 +1171,7 @@ def render_settings():
                                      value=st.session_state.db["settings"].get_setting("smtp_password"),
                                      type="password")
 
-    if st.button("이메일 설정 저장", use_container_width=True):
+    if st.button("이메일 설정 저장", width='stretch'):
         st.session_state.db["settings"].set_setting("smtp_host", smtp_host)
         st.session_state.db["settings"].set_setting("smtp_port", smtp_port)
         st.session_state.db["settings"].set_setting("smtp_email", smtp_email)
@@ -1139,7 +1193,7 @@ def render_settings():
         company_phone = st.text_input("연락처",
                                      value=st.session_state.db["settings"].get_setting("company_phone"))
 
-    if st.button("회사 정보 저장", use_container_width=True):
+    if st.button("회사 정보 저장", width='stretch'):
         st.session_state.db["settings"].set_setting("company_name", company_name)
         st.session_state.db["settings"].set_setting("company_address", company_address)
         st.session_state.db["settings"].set_setting("company_phone", company_phone)
@@ -1154,7 +1208,7 @@ def render_settings():
                            value=st.session_state.db["settings"].get_setting("openai_api_key"),
                            type="password")
 
-    if st.button("API 키 저장", use_container_width=True):
+    if st.button("API 키 저장", width='stretch'):
         st.session_state.db["settings"].set_setting("openai_api_key", api_key)
         st.success("API 키가 저장되었습니다.")
 
@@ -1197,7 +1251,7 @@ def render_contracts():
                     total = int(quotation['total_amount'])
                     st.markdown(f"**합계:** {format_currency(total)} (+VAT: {format_currency(int(total * 0.1))})")
 
-                if st.button("📄 계약서 생성", use_container_width=True, type="primary"):
+                if st.button("📄 계약서 생성", width='stretch', type="primary"):
                     # 계약서 생성
                     contract_gen = ContractGenerator()
 
@@ -1277,7 +1331,7 @@ def render_contracts():
                         st.markdown(f"{format_currency(contract.get('total_amount', 0) * 1.1)}")
 
                     with col3:
-                        if st.button("상세", key=f"contract_{contract['id']}", use_container_width=True):
+                        if st.button("상세", key=f"contract_{contract['id']}", width='stretch'):
                             st.session_state.selected_contract = contract['id']
                             st.rerun()
 
@@ -1318,7 +1372,7 @@ def render_contracts():
                             st.success("✅ 관리자 서명 완료")
                             st.caption(f"서명일: {format_date(contract.get('admin_signed_at'))}")
                         else:
-                            if st.button("✍️ 관리자 서명하기", use_container_width=True):
+                            if st.button("✍️ 관리자 서명하기", width='stretch'):
                                 # 관리자 서명 모달
                                 st.session_state.show_admin_sign = True
                                 st.rerun()
@@ -1375,7 +1429,7 @@ def render_contracts():
                         st.code(sign_url, language="text")
 
                     with col2:
-                        if st.button("📧 이메일 발송", use_container_width=True):
+                        if st.button("📧 이메일 발송", width='stretch'):
                             # SMTP 설정 확인
                             smtp_settings = st.session_state.db["settings"].get_all_settings()
                             sender = EmailSender.create_from_settings(smtp_settings)
@@ -1461,7 +1515,7 @@ def render_payments():
 
                 notes = st.text_area("비고")
 
-                if st.button("💳 청구서 생성", use_container_width=True):
+                if st.button("💳 청구서 생성", width='stretch'):
                     import sqlite3
                     conn = st.session_state.db["settings"].get_connection()
                     cursor = conn.cursor()
@@ -1537,7 +1591,7 @@ def render_payments():
                     "상태": get_status_badge(p.get('status', 'pending'))
                 })
 
-            st.dataframe(pd.DataFrame(payment_data), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(payment_data), width='stretch', hide_index=True)
 
             # 상세 보기
             st.markdown("### 결제 상세")
@@ -1571,7 +1625,7 @@ def render_payments():
                                                 index=statuses.index(current_status) if current_status in statuses else 0,
                                                 format_func=lambda x: status_labels[x])
 
-                        if st.button("🔄 상태 변경", use_container_width=True):
+                        if st.button("🔄 상태 변경", width='stretch'):
                             import sqlite3
                             conn = st.session_state.db["settings"].get_connection()
                             cursor = conn.cursor()
@@ -1587,7 +1641,7 @@ def render_payments():
                             st.success("상태가 변경되었습니다.")
                             st.rerun()
 
-                        if st.button("📧 입금 요청 알림", use_container_width=True):
+                        if st.button("📧 입금 요청 알림", width='stretch'):
                             # SMTP 설정 확인
                             smtp_settings = st.session_state.db["settings"].get_all_settings()
                             sender = EmailSender.create_from_settings(smtp_settings)
@@ -1634,14 +1688,14 @@ def render_calendar():
     with col1:
         view_mode = st.radio("뷰 모드", ["월간 보기", "주간 보기", "리스트 보기"], horizontal=True)
     with col2:
-        if st.button("🔄 동기화", use_container_width=True):
+        if st.button("🔄 동기화", width='stretch'):
             cal_manager = CalendarManager(st.session_state.db["calendar"])
             task_count = cal_manager.sync_from_tasks()
             payment_count = cal_manager.sync_from_payments()
             st.success(f"태스크 {task_count}개, 결제 {payment_count}개 동기화 완료!")
             st.rerun()
     with col3:
-        if st.button("📥 내보내기", use_container_width=True):
+        if st.button("📥 내보내기", width='stretch'):
             events = st.session_state.db["calendar"].get_all_events()
             if events:
                 ical_data = generate_ical_from_events(events)
@@ -1650,7 +1704,7 @@ def render_calendar():
                     data=ical_data,
                     file_name=f"calendar_{datetime.now().strftime('%Y%m%d')}.ics",
                     mime="text/calendar",
-                    use_container_width=True
+                    width='stretch'
                 )
 
     st.markdown("---")
@@ -1736,7 +1790,7 @@ def render_calendar():
 
             col1, col2 = st.columns(2)
             with col1:
-                submit = st.form_submit_button("이벤트 추가", use_container_width=True)
+                submit = st.form_submit_button("이벤트 추가", width='stretch')
 
             if submit and event_title:
                 start_datetime = f"{event_date} 00:00:00" if all_day else f"{event_date} {event_time}"
@@ -1970,12 +2024,12 @@ def render_time_tracker():
 
             with col1:
                 if active_session:
-                    if st.button("⏹️ 정지", use_container_width=True, type="primary"):
+                    if st.button("⏹️ 정지", width='stretch', type="primary"):
                         st.session_state.db["time_session"].stop_session(active_session['id'])
                         st.success("타이머가 정지되었습니다.")
                         st.rerun()
                 else:
-                    if st.button("▶️ 시작", use_container_width=True, type="primary"):
+                    if st.button("▶️ 시작", width='stretch', type="primary"):
                         if selected_project:
                             task_id = task_options[selected_task] if selected_task != "태스크 없음" else None
                             st.session_state.db["time_session"].start_session(
@@ -1987,7 +2041,7 @@ def render_time_tracker():
                             st.rerun()
 
             with col2:
-                if st.button("⏸️ 일시정지", use_container_width=True):
+                if st.button("⏸️ 일시정지", width='stretch'):
                     st.info("일시정지 기능은 준비 중입니다.")
 
             with col3:
@@ -2039,7 +2093,7 @@ def render_time_tracker():
             entry_hourly_rate = st.number_input("시간당 단가 (원)", min_value=0, value=0)
             entry_description = st.text_area("설명")
 
-            if st.form_submit_button("시간 기록 추가", use_container_width=True):
+            if st.form_submit_button("시간 기록 추가", width='stretch'):
                 if entry_project and entry_title:
                     task_id = entry_task_options[entry_task] if entry_task != "태스크 없음" else None
 
@@ -2132,7 +2186,7 @@ def render_time_tracker():
                 {"프로젝트": k, "시간": f"{v:.1f}시간"}
                 for k, v in sorted(project_times.items(), key=lambda x: x[1], reverse=True)
             ])
-            st.dataframe(df_times, use_container_width=True, hide_index=True)
+            st.dataframe(df_times, width='stretch', hide_index=True)
         else:
             st.info("기록된 시간이 없습니다.")
 
@@ -2251,7 +2305,7 @@ def render_file_manager():
 
             file_description = st.text_area("설명")
 
-            if st.form_submit_button("파일 업로드", use_container_width=True):
+            if st.form_submit_button("파일 업로드", width='stretch'):
                 if upload_project and uploaded_file:
                     project_id = project_options[upload_project]
 
@@ -2322,7 +2376,7 @@ def render_login():
 
             col1, col2 = st.columns(2)
             with col1:
-                submit = st.form_submit_button("로그인", type="primary", use_container_width=True)
+                submit = st.form_submit_button("로그인", type="primary", width='stretch')
             with col2:
                 if st.form_submit_button("초기화"):
                     st.rerun()
@@ -2430,7 +2484,7 @@ def render_users():
             new_department = st.text_input("부서")
             new_phone = st.text_input("연락처")
 
-            if st.form_submit_button("팀원 추가", type="primary", use_container_width=True):
+            if st.form_submit_button("팀원 추가", type="primary", width='stretch'):
                 if new_name and new_email and new_password:
                     try:
                         user_id = auth_manager.create_user(
@@ -2571,6 +2625,7 @@ def main():
 
     # 페이지 라우팅
     page_renderers = {
+        "login": render_login,
         "dashboard": render_dashboard,
         "clients": render_clients,
         "inquiries": render_inquiries,
@@ -2586,7 +2641,7 @@ def main():
         "settings": render_settings,
     }
 
-    renderer = page_renderers.get(st.session_state.current_page, render_dashboard)
+    renderer = page_renderers.get(st.session_state.current_page, render_login)
     renderer()
 
 
