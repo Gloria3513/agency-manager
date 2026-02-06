@@ -640,10 +640,10 @@ def render_quotations():
         st.info("고객 문의 내용과 설정된 단가 지침을 바탕으로 AI가 자동으로 견적서를 생성합니다.")
 
         # API 키 확인
-        api_key = st.session_state.db["settings"].get_setting("openai_api_key")
+        api_key = st.session_state.db["settings"].get_setting("gemini_api_key")
 
         if not api_key:
-            st.warning("⚠️ OpenAI API 키가 설정되지 않았습니다. 설정 페이지에서 API 키를 입력하세요.")
+            st.warning("⚠️ Gemini API 키가 설정되지 않았습니다. 설정 페이지에서 API 키를 입력하세요.")
         else:
             # 문의 선택
             inquiries = st.session_state.db["inquiry"].get_all_inquiries()
@@ -1202,14 +1202,14 @@ def render_settings():
     st.markdown("---")
 
     st.markdown("### 🤖 AI 설정")
-    st.info("OpenAI API를 사용하여 견적서를 자동 생성합니다.")
+    st.info("Gemini API를 사용하여 견적서를 자동 생성합니다.")
 
-    api_key = st.text_input("OpenAI API Key",
-                           value=st.session_state.db["settings"].get_setting("openai_api_key"),
+    api_key = st.text_input("Gemini API Key",
+                           value=st.session_state.db["settings"].get_setting("gemini_api_key"),
                            type="password")
 
     if st.button("API 키 저장", width='stretch'):
-        st.session_state.db["settings"].set_setting("openai_api_key", api_key)
+        st.session_state.db["settings"].set_setting("gemini_api_key", api_key)
         st.success("API 키가 저장되었습니다.")
 
 

@@ -1,20 +1,31 @@
 """
 AI 견적서 생성기
-OpenAI API를 사용하여 고객 문의 내용과 단가 지침을 참조하여 자동 견적서 생성
+Google Gemini API를 사용하여 고객 문의 내용과 단가 지침을 참조하여 자동 견적서 생성
 """
 
 import json
 import re
 from typing import List, Dict, Optional
-from openai import OpenAI
+
+try:
+    import google.generativeai as genai
+    GEMINI_AVAILABLE = True
+except ImportError:
+    GEMINI_AVAILABLE = False
 
 
 class AIQuotationGenerator:
-    """AI 기반 견적서 생성 클래스"""
+    """AI 기반 견적서 생성 클래스 - Gemini API 사용"""
 
     def __init__(self, api_key: str = None):
-        self.client = OpenAI(api_key=api_key) if api_key else None
-        self.model = "gpt-4o-mini"  # 비용 효율적인 모델
+        self.api_key = api_key
+        self.model = "gemini-2.0-flash-exp"  # 빠르고 저렴한 모델
+
+        if api_key and GEMINI_AVAILABLE:
+            genai.configure(api_key=api_key)
+            self.client = genai.GenerativeModel(self.model)
+        else:
+            self.client = None
 
     def generate_quotation(self, inquiry: Dict, pricing_guideline: str,
                           company_info: Dict = None) -> Dict:
@@ -42,43 +53,21 @@ class AIQuotationGenerator:
         prompt = self._build_prompt(inquiry, pricing_guideline, company_info)
 
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": """당신은 전문적인 견적 전문가입니다.
-고객의 문의 내용과 단가 지침을 바탕으로 상세하고 실현 가능한 견적서를 작성하세요.
-
-출력 형식은 반드시 다음 JSON 형식을 따르세요:
-{
-  "items": [
-    {"name": "품목명", "description": "상세 설명", "quantity": 1, "unit": "건", "unit_price": 1000000},
-    ...
-  ],
-  "total_amount": 5000000,
-  "notes": "견적 관련 메모",
-  "rationale": "견적 산출 근거"
-}
-
-금액은 원화(원) 단위로, 숫자만 입력하세요. (콤마, "원" 등 제외)
-"""
-                    },
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
-                temperature=0.3,  # 일관성을 위해 낮게 설정
-                response_format={"type": "json_object"}
+            response = self.client.generate_content(
+                prompt,
+                generation_config=genai.GenerationConfig(
+                    temperature=0.3,
+                    max_output_tokens=2048,
+                    response_mime_type="application/json"
+                )
             )
 
             # 응답 파싱
-            content = response.choices[0].message.content
+            content = response.text
             result = json.loads(content)
 
             # 토큰 사용량 및 비용 계산
-            tokens_used = response.usage.total_tokens
+            tokens_used = response.usage_metadata.total_token_count if hasattr(response.usage_metadata, 'total_token_count') else 0
             estimated_cost = self._calculate_cost(tokens_used)
 
             result["tokens_used"] = tokens_used
@@ -93,7 +82,10 @@ class AIQuotationGenerator:
     def _build_prompt(self, inquiry: Dict, pricing_guideline: str,
                      company_info: Dict = None) -> str:
         """프롬프트 생성"""
-        prompt = f"""# 고객 문의 내용
+        prompt = f"""당신은 전문적인 견적 전문가입니다.
+고객의 문의 내용과 단가 지침을 바탕으로 상세하고 실현 가능한 견적서를 작성하세요.
+
+# 고객 문의 내용
 
 ## 고객 정보
 - 이름: {inquiry.get('client_name', '-')}
@@ -123,6 +115,23 @@ class AIQuotationGenerator:
 2. 희망 기간에 맞춰 일정을 계획에 포함하세요
 3. 각 품목에 대해 명확한 근거를 제시하세요
 4. 총액은 고객 예산의 80-120% 범위가 이상적입니다
+
+---
+
+# 출력 형식
+
+반드시 다음 JSON 형식으로만 출력하세요:
+{{
+  "items": [
+    {{"name": "품목명", "description": "상세 설명", "quantity": 1, "unit": "건", "unit_price": 1000000}},
+    ...
+  ],
+  "total_amount": 5000000,
+  "notes": "견적 관련 메모",
+  "rationale": "견적 산출 근거"
+}}
+
+금액은 원화(원) 단위로, 숫자만 입력하세요. (콤마, "원" 등 제외)
 """
 
         if company_info:
@@ -136,11 +145,11 @@ class AIQuotationGenerator:
         return prompt
 
     def _calculate_cost(self, tokens: int) -> float:
-        """토큰 사용량을 USD 비용으로 변환 (gpt-4o-mini 기준)"""
-        # gpt-4o-mini: 입력 $0.15/1M tokens, 출력 $0.60/1M tokens
+        """토큰 사용량을 USD 비용으로 변환 (Gemini Flash 기준)"""
+        # Gemini 2.0 Flash: 입력 $0.075/1M tokens, 출력 $0.30/1M tokens
         # 평균적으로 입력:출력 = 1:2 가정
-        input_cost = (tokens / 3) * 0.15 / 1_000_000
-        output_cost = (tokens * 2 / 3) * 0.60 / 1_000_000
+        input_cost = (tokens / 3) * 0.075 / 1_000_000
+        output_cost = (tokens * 2 / 3) * 0.30 / 1_000_000
         return input_cost + output_cost
 
     def _fallback_quotation(self, inquiry: Dict) -> Dict:
@@ -185,11 +194,17 @@ class AIQuotationGenerator:
 
 
 class AIEmailGenerator:
-    """AI 기반 이메일 생성 클래스"""
+    """AI 기반 이메일 생성 클래스 - Gemini API 사용"""
 
     def __init__(self, api_key: str = None):
-        self.client = OpenAI(api_key=api_key) if api_key else None
-        self.model = "gpt-4o-mini"
+        self.api_key = api_key
+        self.model = "gemini-2.0-flash-exp"
+
+        if api_key and GEMINI_AVAILABLE:
+            genai.configure(api_key=api_key)
+            self.client = genai.GenerativeModel(self.model)
+        else:
+            self.client = None
 
     def generate_quotation_email(self, client_name: str, quotation_number: str,
                                  quotation_url: str, company_info: Dict = None) -> str:
@@ -198,44 +213,38 @@ class AIEmailGenerator:
         if not self.client:
             return self._fallback_email(client_name, quotation_number, quotation_url)
 
+        company_name = company_info.get('name', '스마택트') if company_info else '스마택트'
+
         prompt = f"""다음 정보를 바탕으로 정중한 견적서 발송 이메일을 작성해주세요.
 
 # 정보
 - 고객명: {client_name}
 - 견적서 번호: {quotation_number}
 - 견적서 확인 링크: {quotation_url}
-- 회사명: {company_info.get('name', '에이전시') if company_info else '에이전시'}
+- 회사명: {company_name}
 
 # 요청사항
 - 정중하고 전문적인 톤
 - 견적서 확인 요청
-- 문의 있을 시 연락처 안내
+- 문의 있을 시 연락처 안내 (smatact@gmail.com / 010-4782-3513)
 - HTML 형식이 아닌 일반 텍스트로 작성
 
-이메일 제목과 본문을 각각 "subject:"와 "body:"로 구분하여 작성해주세요."""
+이메일 제목과 본문을 각각 "제목:"과 "본문:"으로 구분하여 작성해주세요."""
 
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "당신은 전문적인 비즈니스 이메일 작성자입니다."
-                    },
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
-                temperature=0.5,
-                max_tokens=500
+            response = self.client.generate_content(
+                prompt,
+                generation_config=genai.GenerationConfig(
+                    temperature=0.5,
+                    max_output_tokens=500
+                )
             )
 
-            content = response.choices[0].message.content
+            content = response.text
 
             # subject와 body 분리
-            subject_match = re.search(r"subject:\s*(.+?)(?:\n|$)", content, re.IGNORECASE)
-            body_match = re.search(r"body:\s*(.+)", content, re.IGNORECASE | re.DOTALL)
+            subject_match = re.search(r"제목:\s*(.+?)(?:\n|$)", content, re.IGNORECASE)
+            body_match = re.search(r"본문:\s*(.+)", content, re.IGNORECASE | re.DOTALL)
 
             subject = subject_match.group(1).strip() if subject_match else f"[견적서] {quotation_number}"
             body = body_match.group(1).strip() if body_match else content
@@ -253,12 +262,16 @@ class AIEmailGenerator:
             "subject": f"[견적서] {quotation_number} - {client_name}님",
             "body": f"""{client_name}님 안녕하세요,
 
+스마택트입니다.
+
 요청하신 프로젝트에 대한 견적서를 보내드립니다.
 
 아래 링크에서 견적서 내용을 확인하실 수 있습니다.
 {quotation_url}
 
 궁금한 점이 있으시면 언제든지 연락 주시기 바랍니다.
+이메일: smatact@gmail.com
+전화: 010-4782-3513
 
 감사합니다.
 """
@@ -269,11 +282,14 @@ class AIEmailGenerator:
 def log_ai_usage(db, request_type: str, prompt: str, response: str,
                 tokens_used: int, cost: float, model: str):
     """AI 사용 로그를 데이터베이스에 저장"""
-    conn = db.get_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        INSERT INTO ai_logs (request_type, prompt, response, tokens_used, cost, model)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (request_type, prompt[:5000], str(response)[:5000], tokens_used, cost, model))
-    conn.commit()
-    conn.close()
+    try:
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO ai_logs (request_type, prompt, response, tokens_used, cost, model)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (request_type, prompt[:5000], str(response)[:5000], tokens_used, cost, model))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"AI log error: {e}")
