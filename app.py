@@ -500,6 +500,70 @@ def render_clients():
     """고객 관리 페이지"""
     st.markdown("## 👥 고객 관리")
 
+    # 고객 일괄 등록
+    with st.expander("📥 스프레드시트 일괄 등록", expanded=False):
+        st.markdown("#### CSV 또는 엑셀 파일로 고객을 일괄 등록하세요")
+        st.info("💡 파일 형식: 이름, 이메일, 전화번호, 회사명 순서로 되어있어야 합니다")
+
+        uploaded_file = st.file_uploader(
+            "파일 선택",
+            type=['csv', 'xlsx', 'xls'],
+            help="CSV 또는 엑셀 파일을 업로드하세요"
+        )
+
+        if uploaded_file:
+            try:
+                # 파일 확장자에 따라 읽기
+                if uploaded_file.name.endswith('.csv'):
+                    df = pd.read_csv(uploaded_file)
+                else:  # 엑셀
+                    df = pd.read_excel(uploaded_file)
+
+                st.markdown("#### 📋 미리보기")
+                st.dataframe(df.head(10), use_container_width=True)
+                st.caption(f"총 {len(df)}명의 고객")
+
+                # 열 매핑 안내
+                st.markdown("**예상 열 이름:**")
+                cols = df.columns.tolist()
+                st.write(", ".join(cols))
+
+                if st.button("✅ 고객 일괄 등록", type="primary", width='stretch'):
+                    success_count = 0
+                    error_count = 0
+
+                    with st.spinner("고객을 등록 중입니다..."):
+                        for idx, row in df.iterrows():
+                            try:
+                                # 열 이름 유연하게 처리
+                                name = row.get('이름') or row.get('name') or row.get('Name') or row.get('이름', '')
+                                email = row.get('이메일') or row.get('email') or row.get('Email') or row.get('이메일', '')
+                                phone = row.get('전화번호') or row.get('phone') or row.get('전화') or row.get('연락처', '')
+                                company = row.get('회사명') or row.get('company') or row.get('회사', '')
+
+                                if name and email:
+                                    st.session_state.db["client"].add_client(
+                                        name=str(name),
+                                        email=str(email),
+                                        phone=str(phone) if pd.notna(phone) else '',
+                                        company=str(company) if pd.notna(company) else ''
+                                    )
+                                    success_count += 1
+                                else:
+                                    error_count += 1
+                            except Exception as e:
+                                error_count += 1
+
+                    st.success(f"✅ {success_count}명 등록 완료!")
+                    if error_count > 0:
+                        st.warning(f"⚠️ {error_count}명은 실패 (이름 또는 이메일 없음)")
+
+                    if st.button("목록으로 가기", width='stretch'):
+                        st.rerun()
+
+            except Exception as e:
+                st.error(f"파일 읽기 오류: {str(e)}")
+
     # 고객 추가/편집 모드
     with st.expander("➕ 새 고객 추가", expanded=False):
         with st.form("add_client_form"):
