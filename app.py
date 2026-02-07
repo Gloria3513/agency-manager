@@ -905,7 +905,7 @@ def render_quotations():
                             # 액션 버튼
                             st.markdown("---")
 
-                            # PDF 다운로드 (미리보기)
+                            # PDF 다운로드 및 이메일 발송 (미리보기)
                             try:
                                 pdf_gen = PDFQuotationGenerator()
 
@@ -937,13 +937,46 @@ def render_quotations():
                                     company_info=company_info if company_info['name'] else None
                                 )
 
-                                st.download_button(
-                                    label="📄 PDF 다운로드",
-                                    data=pdf_data,
-                                    file_name=f"견적서_{quotation_for_pdf['quotation_number']}.pdf",
-                                    mime="application/pdf",
-                                    width='stretch'
-                                )
+                                # 버튼 영역
+                                col1, col2 = st.columns(2)
+
+                                with col1:
+                                    st.download_button(
+                                        label="📄 PDF 다운로드",
+                                        data=pdf_data,
+                                        file_name=f"견적서_{quotation_for_pdf['quotation_number']}.pdf",
+                                        mime="application/pdf",
+                                        width='stretch'
+                                    )
+
+                                with col2:
+                                    # 이메일 발송 버튼
+                                    if st.button("📧 이메일 발송", width='stretch', key="preview_email"):
+                                        # SMTP 설정 확인
+                                        smtp_settings = st.session_state.db["settings"].get_all_settings()
+                                        sender = EmailSender.create_from_settings(smtp_settings)
+
+                                        if not sender:
+                                            st.error("SMTP 설정이 되어 있지 않습니다. 설정 페이지에서 이메일을 구성하세요.")
+                                        else:
+                                            with st.spinner("이메일을 발송 중입니다..."):
+                                                # 이메일 발송
+                                                result = sender.send_quotation(
+                                                    to_email=preview['client_email'],
+                                                    client_name=preview['client_name'],
+                                                    quotation_number=quotation_for_pdf['quotation_number'],
+                                                    quotation_url=f"http://localhost:8501/quotation/{quotation_id}",
+                                                    pdf_data=pdf_data,
+                                                    company_name=company_info['name']
+                                                )
+
+                                                if result['success']:
+                                                    st.success("✅ " + result['message'])
+                                                    # 상태를 'sent'로 변경
+                                                    st.session_state.db["quotation"].update_quotation_status(quotation_id, "sent")
+                                                else:
+                                                    st.error("❌ " + result['message'])
+
                             except Exception as e:
                                 st.error(f"PDF 생성 오류: {str(e)}")
 
